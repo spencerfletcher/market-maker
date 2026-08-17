@@ -34,7 +34,7 @@ The architectural pivot was simple: **stop racing to take, and get paid to rest 
 
 ### Fee Structure & Credit Floors
 - **Kalshi Fee Model:** Evaluates closed-form contract fee equations rather than static display tables.
-  $$	ext{Taker Fee} = 0.07 \cdot C \cdot p \cdot (1-p)$$
+  $$\text{Taker Fee} = 0.07 \cdot C \cdot p \cdot (1-p)$$
   Ceiled to the centicent ($0.0001$). Maker fees evaluate to exactly $\frac{1}{4}$ of taker ($0.0175 \cdot C \cdot p \cdot (1-p)$).
 - **Polymarket Maker Credits:** Modeled as $0.0125 \cdot p \cdot (1-p)$, rounded per fill increment rather than per order. If small taker fills round the earned credit down to zero, quoting that book loses money; the engine auto-refuses books where prices put the credit below the rounding floor.
 
@@ -56,7 +56,6 @@ All prices, sizes, fees, and P&L are represented as exact `Decimal` types initia
 ### Venue Quirks & Execution Edge Cases
 - **Short Price Space Alignment:** Exchanges evaluate short-side execution requests in Yes-space. Transmitting price complements mirrored resting ask orders, preventing short-position flattens from filling across **60% (268 of 449)** of execution candidates.
 - **Silent FOK Rewrites:** Handled undocumented exchange behavior where 300-share Fill-or-Kill (FOK) orders filled 255 shares due to silent internal venue conversion to Immediate-or-Cancel (IOC).
-- **Doubleheader Matcher Guard:** Prevented game-pairing bugs where 149 of 264 "guaranteed_profit" candidates were false cross-game matches between Game 1 and Game 2 of doubleheaders.
 
 ---
 
@@ -92,10 +91,16 @@ bot/
   core/       Exact money math, durable state, crash recovery, loss cap ratchets, feed health
 scripts/      Real-money arming shims, operator cancel tools, and market screeners
 tests/        Pure/mocked test suite (14 files, 684 tests)
+
+ARCHITECTURE.md   Technical map — quote cycle as a gate graph, and the SIGKILL/recovery
+                  sequence, both as rendered diagrams
+NOTICE.md         Exactly what is public, what is private, and where the line falls
 ```
 
 ---
 
 ## Scope & Disclaimer
 
-This is a personal research engine built for small-scale testing behind explicit arming gates. It is presented as a public technical artifact. Specific market parameterizations, trading histories, and P&L results are withheld.
+This is a personal research engine built for small-scale testing behind explicit arming gates. It is presented as a public technical artifact. Specific market parameterizations, trading histories, and P&L results are withheld — [`NOTICE.md`](NOTICE.md) states exactly where that line falls and why.
+
+For the technical map — the quote cycle drawn as a gate graph, and the SIGKILL/recovery sequence — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
