@@ -144,8 +144,9 @@ def main() -> None:
         print( "     want to halt. A maker launched by hand watches the path relative to where")
         print( "     THAT run was started, so create the file there.")
     print("  (kill switch present ⇒ the maker halts new quoting within one --requote-s and tears")
-    print("   down. scripts/maker_supervisor.py does NOT read it, so it keeps RELAUNCHING makers —")
-    print("   each one halts before quoting, but the supervisor looks alive.)")
+    print("   down. A supervising process that relaunches makers is a SEPARATE program and does")
+    print("   not necessarily read this file — each child then halts before quoting while the")
+    print("   supervisor looks alive. Stop the supervisor too.)")
     print()
 
 

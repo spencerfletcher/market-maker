@@ -1,4 +1,4 @@
-"""Fail-closed venue-quantity parsing, shared by the reconciler and the maker supervisor.
+"""Fail-closed venue-quantity parsing, shared by every process that reads a venue quantity.
 
 It lives on its own because a sixteen-line pure parser should never drag a trading engine in
 behind it — every consumer of this function is somewhere you do NOT want an import cycle.
