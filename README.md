@@ -1,8 +1,18 @@
 # Prediction-Market Maker
 
 Two market-making engines for regulated prediction-market exchanges — **Polymarket US** and
-**Kalshi** — built around a single unglamorous question: *what does this process do when it is
-killed mid-order?*
+**Kalshi** — built to find out what actually makes money, and to keep being right about it as the
+venues change underneath.
+
+The engineering problem is not "quote a two-sided market"; that part is easy. It is that **almost
+every number you would use to decide whether a strategy works is wrong the first time you measure
+it**, usually in the direction you were hoping for. A fee model read off a display table instead of
+the formula above it. A markout that counts the spread you captured as price quality. A queue
+metric that turns out to count the people behind you. Each of those produced a confident,
+profitable-looking conclusion here, and each was false. So the engines are built around measuring
+their own economics honestly, refusing to trade on a number that has not survived being attacked,
+and getting cheaper to correct when one turns out wrong — because the correction is not the
+exception, it is the loop.
 
 > **Status: a personal research engine, not a production desk.**
 >
@@ -11,8 +21,10 @@ killed mid-order?*
 > under active development; the Kalshi maker is the first-generation engine, kept in the tree
 > because its book maintenance and its queue-attribution instrumentation are the best parts of it —
 > and because a repository that only shows you the version its author is proud of is a sales
-> brochure. Market selection, tuned parameters, and every measured result are deliberately not
-> published; see [`NOTICE.md`](NOTICE.md) for exactly what is held back and why.
+> brochure. The methods are public and the answers are not: which books to quote, the tuned
+> parameters, and every measured result stay private, so this repository will show you how the
+> decisions get made without handing over the decisions. See [`NOTICE.md`](NOTICE.md) for the exact
+> line and why it falls there.
 
 ---
 
@@ -29,8 +41,10 @@ crossable without colocation.
 
 The conclusion was structural, not a tuning failure: **if you cannot win the race to take, stop
 racing and get paid to wait.** A maker does not need to be faster than the market — it needs to be
-resting when the market arrives, and to survive being wrong about what it is holding. Those are
-completely different engineering problems, and they are what this repository is about.
+resting when the market arrives, to be quoting books that can actually pay it, and to survive being
+wrong about what it is holding. That reframing is the reason this repository exists, and the
+measurement apparatus carried over with it: the arb engine's real product was never the trades, it
+was knowing which of its own numbers to believe.
 
 ## Why market-making here is hard
 
