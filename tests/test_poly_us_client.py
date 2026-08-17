@@ -119,7 +119,7 @@ async def test_get_settlement_parses_numeric_field():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeSettlementMarkets({"slug": "x", "settlement": 1})
-    assert await client.get_settlement("aec-mlb-tor-bos") == pytest.approx(1.0)
+    assert await client.get_settlement("exg-mlb-tor-bos") == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_get_settlement_zero_is_valid_not_missing():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeSettlementMarkets({"slug": "x", "settlement": 0})
-    assert await client.get_settlement("aec-mlb-tor-bos::short") == pytest.approx(0.0)
+    assert await client.get_settlement("exg-mlb-tor-bos::short") == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_get_fill_quote_long_open():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", offers=[0.48, 0.49]))
-    ask, state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
+    ask, state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
     assert ask == pytest.approx(0.48) and state == "MARKET_STATE_OPEN"
     # long: offers as-is in ask-space, both levels carried (caller sums fillable-at-limit)
     assert levels == [(0.48, 100.0), (0.49, 100.0)]
@@ -187,7 +187,7 @@ async def test_get_fill_quote_short_one_minus_bid():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", bids=[0.47, 0.46]))
-    ask, state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos::short")
+    ask, state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos::short")
     assert ask == pytest.approx(0.53)   # 1 − best bid 0.47
     # short: bids normalized to ASK space (1−px), so the caller's `p <= poly_limit` is
     # apples-to-apples — this is the one place a space-mismatch would hide.
@@ -200,7 +200,7 @@ async def test_get_fill_quote_reports_suspended_state():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_SUSPENDED", offers=[0.38]))
-    ask, state, _levels, _tx, _stats = await client.get_fill_quote("aec-fwc-sui-bih")
+    ask, state, _levels, _tx, _stats = await client.get_fill_quote("exg-fwc-sui-bih")
     assert state == "MARKET_STATE_SUSPENDED"   # caller must refuse this
 
 
@@ -239,7 +239,7 @@ async def test_get_fill_quote_returns_transact_time():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = _FakeSDK(book)
-    _ask, _state, _levels, tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
+    _ask, _state, _levels, tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
     assert tx == "2026-06-22T19:30:20.818756170Z"
 
 
@@ -284,7 +284,7 @@ async def test_get_fill_quote_carries_stats():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = _FakeSDK(book)
-    _ask, _state, _levels, _tx, stats = await client.get_fill_quote("aec-mlb-tor-bos")
+    _ask, _state, _levels, _tx, stats = await client.get_fill_quote("exg-mlb-tor-bos")
     assert stats["open_interest"] == pytest.approx(777.0)
     assert stats["last_trade_px"] == pytest.approx(0.48)
 
@@ -294,12 +294,12 @@ async def test_get_fill_quote_fresh_busts_cache_via_nonce_get():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     sdk = client._sdk = _FakeSDK(_book("MARKET_STATE_OPEN", offers=[0.48]))
-    await client.get_fill_quote("aec-mlb-tor-bos")            # default → resource method
+    await client.get_fill_quote("exg-mlb-tor-bos")            # default → resource method
     assert sdk.get_calls == []                                # no raw .get()
-    await client.get_fill_quote("aec-mlb-tor-bos", fresh=True)  # fresh → raw .get() w/ nonce
+    await client.get_fill_quote("exg-mlb-tor-bos", fresh=True)  # fresh → raw .get() w/ nonce
     assert len(sdk.get_calls) == 1
     path, query = sdk.get_calls[0]
-    assert path == "/v1/markets/aec-mlb-tor-bos/book"
+    assert path == "/v1/markets/exg-mlb-tor-bos/book"
     assert "_" in query and query["_"]                        # nonce present, non-empty
 
 
@@ -312,8 +312,8 @@ async def test_get_fill_quote_cached_and_fresh_paths_structurally_equivalent():
     book["marketData"]["transactTime"] = "2026-06-22T19:30:20.818000000Z"
     c1 = PolyUSClient.__new__(PolyUSClient); c1._dry_run = False; c1._sdk = _FakeSDK(book)
     c2 = PolyUSClient.__new__(PolyUSClient); c2._dry_run = False; c2._sdk = _FakeSDK(book)
-    cached = await c1.get_fill_quote("aec-mlb-tor-bos")              # markets.book path
-    fresh = await c2.get_fill_quote("aec-mlb-tor-bos", fresh=True)   # nonce .get() path
+    cached = await c1.get_fill_quote("exg-mlb-tor-bos")              # markets.book path
+    fresh = await c2.get_fill_quote("exg-mlb-tor-bos", fresh=True)   # nonce .get() path
     assert cached == fresh
     assert cached[0] == pytest.approx(0.48) and cached[3] == "2026-06-22T19:30:20.818000000Z"
 
@@ -366,8 +366,8 @@ async def test_sampler_depth_matches_get_book_depth_long():
     client._sdk.markets = _FakeBookMarkets(
         _book_q("MARKET_STATE_OPEN", offers=[(0.48, 40), (0.49, 100)])
     )
-    old = await client.get_book_depth("aec-mlb-tor-bos")
-    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
+    old = await client.get_book_depth("exg-mlb-tor-bos")
+    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
     assert old == _sampler_best_level_depth(levels) == 40.0   # qty at best offer 0.48
 
 
@@ -382,8 +382,8 @@ async def test_sampler_depth_matches_get_book_depth_short():
     client._sdk.markets = _FakeBookMarkets(
         _book_q("MARKET_STATE_OPEN", bids=[(0.30, 40), (0.29, 100)])
     )
-    old = await client.get_book_depth("aec-mlb-tor-bos::short")
-    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos::short")
+    old = await client.get_book_depth("exg-mlb-tor-bos::short")
+    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos::short")
     assert _ask == pytest.approx(0.70)                       # 1 − best bid 0.30
     assert old == _sampler_best_level_depth(levels) == 40.0  # space-invariant qty
 
@@ -595,9 +595,9 @@ async def test_place_limit_fok_short_token_uses_buy_short_and_strips_suffix():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.orders = _FakeOrders({"order": {"status": "killed"}})
-    await client.place_limit_fok("aec-mlb-tor-bos::short", 0.53, 50, "[t]")
+    await client.place_limit_fok("exg-mlb-tor-bos::short", 0.53, 50, "[t]")
     p = client._sdk.orders.last_params
-    assert p["marketSlug"] == "aec-mlb-tor-bos"          # suffix stripped
+    assert p["marketSlug"] == "exg-mlb-tor-bos"          # suffix stripped
     assert p["intent"] == "ORDER_INTENT_BUY_SHORT"
     assert p["price"] == {"value": "0.4700", "currency": "USD"}
     assert p["quantity"] == 50
@@ -610,7 +610,7 @@ async def test_place_limit_fok_long_token_price_is_untouched():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.orders = _FakeOrders({"order": {"status": "killed"}})
-    await client.place_limit_fok("aec-mlb-tor-bos", 0.53, 50, "[t]")
+    await client.place_limit_fok("exg-mlb-tor-bos", 0.53, 50, "[t]")
     p = client._sdk.orders.last_params
     assert p["intent"] == "ORDER_INTENT_BUY_LONG"
     assert p["price"] == {"value": "0.5300", "currency": "USD"}
@@ -639,10 +639,10 @@ async def test_sell_back_short_position_sells_short_at_the_yes_ask():
         {"px": {"value": "0.45", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    price, sold = await client.sell_back("aec-mlb-tor-bos::short", 30, "[t]")
+    price, sold = await client.sell_back("exg-mlb-tor-bos::short", 30, "[t]")
     assert price == pytest.approx(0.40)  # the best yes ask, in yes space
     p = client._sdk.orders.calls[0]
-    assert p["marketSlug"] == "aec-mlb-tor-bos"
+    assert p["marketSlug"] == "exg-mlb-tor-bos"
     assert p["intent"] == "ORDER_INTENT_SELL_SHORT"
     assert p["price"] == {"value": "0.4000", "currency": "USD"}
 
@@ -719,7 +719,7 @@ async def test_get_book_depth_short_uses_best_bid_level():
     client = PolyUSClient.__new__(PolyUSClient)
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", bids=[0.47, 0.46]))
-    assert await client.get_book_depth("aec-mlb-tor-bos::short") == pytest.approx(100.0)  # best bid 0.47 only
+    assert await client.get_book_depth("exg-mlb-tor-bos::short") == pytest.approx(100.0)  # best bid 0.47 only
 
 
 @pytest.mark.asyncio
@@ -822,7 +822,7 @@ from bot.poly_us.sides import parse_token
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("token", ["aec-mlb-tor-bos", "aec-mlb-tor-bos::short"])
+@pytest.mark.parametrize("token", ["exg-mlb-tor-bos", "exg-mlb-tor-bos::short"])
 async def test_quote_from_md_is_exactly_what_get_fill_quote_returns(token, monkeypatch):
     """The anti-drift property, stated as an assertion.
 
@@ -1573,7 +1573,7 @@ async def test_sell_back_short_retry_pays_MORE_not_less():
         {"px": {"value": "0.40", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("aec-mlb-tor-bos::short", 5, "[t]")
+    await client.sell_back("exg-mlb-tor-bos::short", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert len(prices) == 2, f"expected a retry, got {prices}"
     assert prices[0] == pytest.approx(0.40)
@@ -1596,7 +1596,7 @@ async def test_sell_back_long_retry_still_accepts_LESS():
         {"px": {"value": "0.40", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("aec-mlb-tor-bos", 5, "[t]")
+    await client.sell_back("exg-mlb-tor-bos", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert len(prices) == 2
     assert prices[1] < prices[0], f"long retry must accept LESS, got {prices}"
@@ -1623,7 +1623,7 @@ async def test_sell_back_short_retry_never_lands_behind_the_first_attempt():
         {"px": {"value": "0.995", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("aec-mlb-tor-bos::short", 5, "[t]")
+    await client.sell_back("exg-mlb-tor-bos::short", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert prices[1] >= prices[0], (
         f"short retry must never be LESS marketable than attempt 1; got {prices}")
@@ -1644,7 +1644,7 @@ async def test_sell_back_long_retry_never_lands_behind_the_first_attempt():
         {"px": {"value": "0.005", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("aec-mlb-tor-bos", 5, "[t]")
+    await client.sell_back("exg-mlb-tor-bos", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert prices[1] <= prices[0], (
         f"long retry must never be LESS marketable than attempt 1; got {prices}")

@@ -46,7 +46,7 @@ def test_retain_keying_matches_prices_on_a_real_pair():
     # short_token(slug) (the REAL function, not a hardcoded "::short") — and run the discovery loop's
     # EXACT prime + live-build, both through the real parse_token. Pins that the two keyings can't drift.
     from bot.poly_us.sides import short_token
-    slug = "aec-mlb-tor-bos"
+    slug = "exg-mlb-tor-bos"
     pair_tokens = (slug, short_token(slug))             # = MarketPair.token_yes_a / token_yes_b (scanner)
     f = PolyUSOrderBookCache(sdk=None)
     live: set[str] = set()
@@ -149,29 +149,29 @@ def test_short_token_prices_as_one_minus_bid():
     """Moneyline short side: ask = 1 − bestBid, depth = bid depth. One slug, two sides."""
     cache = PolyUSOrderBookCache(sdk=None)
     cache._on_market_data({"marketData": {
-        "marketSlug": "aec-mlb-tor-bos",
+        "marketSlug": "exg-mlb-tor-bos",
         "offers": [{"px": {"value": "0.48", "currency": "USD"}, "qty": "11"}],
         "bids":   [{"px": {"value": "0.47", "currency": "USD"}, "qty": "22"},
                    {"px": {"value": "0.46", "currency": "USD"}, "qty": "99"}],  # deeper, ignored
     }})
     # Long side unchanged.
-    assert cache.get_best_ask("aec-mlb-tor-bos") == pytest.approx(0.48)
-    assert cache.get_depth("aec-mlb-tor-bos") == pytest.approx(11)
+    assert cache.get_best_ask("exg-mlb-tor-bos") == pytest.approx(0.48)
+    assert cache.get_depth("exg-mlb-tor-bos") == pytest.approx(11)
     # Short side = 1 − best bid; depth = best-bid qty.
-    assert cache.get_best_ask("aec-mlb-tor-bos::short") == pytest.approx(0.53)
-    assert cache.get_depth("aec-mlb-tor-bos::short") == pytest.approx(22)
+    assert cache.get_best_ask("exg-mlb-tor-bos::short") == pytest.approx(0.53)
+    assert cache.get_depth("exg-mlb-tor-bos::short") == pytest.approx(22)
 
 
 def test_get_best_bid_long_and_short():
     """Flatten price: long sells into bestBid; short sells into 1−bestAsk."""
     cache = PolyUSOrderBookCache(sdk=None)
     cache._on_market_data({"marketData": {
-        "marketSlug": "aec-mlb-tor-bos",
+        "marketSlug": "exg-mlb-tor-bos",
         "offers": [{"px": {"value": "0.48", "currency": "USD"}, "qty": "11"}],
         "bids":   [{"px": {"value": "0.47", "currency": "USD"}, "qty": "22"}],
     }})
-    assert cache.get_best_bid("aec-mlb-tor-bos") == pytest.approx(0.47)          # long → bid
-    assert cache.get_best_bid("aec-mlb-tor-bos::short") == pytest.approx(0.52)   # short → 1−ask
+    assert cache.get_best_bid("exg-mlb-tor-bos") == pytest.approx(0.47)          # long → bid
+    assert cache.get_best_bid("exg-mlb-tor-bos::short") == pytest.approx(0.52)   # short → 1−ask
 
 
 def test_get_best_bid_none_when_no_quote():
@@ -182,21 +182,21 @@ def test_get_best_bid_none_when_no_quote():
 def test_short_token_none_when_no_bids():
     cache = PolyUSOrderBookCache(sdk=None)
     cache._on_market_data({"marketData": {
-        "marketSlug": "aec-mlb-tor-bos",
+        "marketSlug": "exg-mlb-tor-bos",
         "offers": [{"px": {"value": "0.48", "currency": "USD"}, "qty": "11"}],
     }})
-    assert cache.get_best_ask("aec-mlb-tor-bos::short") is None
+    assert cache.get_best_ask("exg-mlb-tor-bos::short") is None
 
 
 def test_lite_update_captures_bid_for_short():
     """marketDataLite carries bestBid too → short side priceable from lite."""
     cache = PolyUSOrderBookCache(sdk=None)
     cache._on_market_data_lite({"marketDataLite": {
-        "marketSlug": "aec-mlb-tor-bos",
+        "marketSlug": "exg-mlb-tor-bos",
         "bestAsk": {"value": "0.48", "currency": "USD"},
         "bestBid": {"value": "0.47", "currency": "USD"},
     }})
-    assert cache.get_best_ask("aec-mlb-tor-bos::short") == pytest.approx(0.53)
+    assert cache.get_best_ask("exg-mlb-tor-bos::short") == pytest.approx(0.53)
 
 
 def test_prime_and_get_best_ask():

@@ -308,7 +308,8 @@ bot/
               queue-attribution tracker
   core/       money (exact Decimal), durable writes, crash state + recovery,
               safety caps, feed health, config, logging, redaction
-scripts/      the real-money arming shims, operator cancel tool, config printer
+scripts/      the real-money arming shims, operator cancel tool, config printer,
+              and the two-stage market screener (structural gates before paid reads)
 tests/        pure/mocked suite
 ARCHITECTURE.md   the technical map, with diagrams
 NOTICE.md         what is public, what is private, and why

@@ -9,18 +9,18 @@ from bot.poly_us.sides import short_token, parse_token
 
 
 def test_short_token_appends_suffix():
-    assert short_token("aec-mlb-tor-bos-2026-06-18") == "aec-mlb-tor-bos-2026-06-18::short"
+    assert short_token("exg-mlb-tor-bos-2026-06-18") == "exg-mlb-tor-bos-2026-06-18::short"
 
 
 def test_parse_long_token():
-    slug, is_short = parse_token("aec-mlb-tor-bos-2026-06-18")
-    assert slug == "aec-mlb-tor-bos-2026-06-18"
+    slug, is_short = parse_token("exg-mlb-tor-bos-2026-06-18")
+    assert slug == "exg-mlb-tor-bos-2026-06-18"
     assert is_short is False
 
 
 def test_parse_short_token():
-    slug, is_short = parse_token("aec-mlb-tor-bos-2026-06-18::short")
-    assert slug == "aec-mlb-tor-bos-2026-06-18"
+    slug, is_short = parse_token("exg-mlb-tor-bos-2026-06-18::short")
+    assert slug == "exg-mlb-tor-bos-2026-06-18"
     assert is_short is True
 
 

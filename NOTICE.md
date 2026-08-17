@@ -22,9 +22,15 @@ deployment**. The separation below is deliberate, not an oversight.
 - **Tuned production values** — position sizing, inventory and loss caps, requote intervals, and
   calibrated thresholds are supplied at runtime. The numeric defaults in the code are illustrative
   and, where they encode calibration, deliberately conservative.
-- **Market selection — the whole of it.** The discovery, screening, scoring, and slate-advisory
-  tooling that decides *which* books are worth quoting is not published, and neither are the book
-  families themselves, nor the launcher that consumes them.
+- **Market selection — the answers, not the method.** The two-stage screener ships
+  (`scripts/poly_market_screen.py`): its crawl, pacing, lane stratification and panel selection are
+  public, because the *design* — cheap structural gates before any paid measurement — is the part
+  worth reading. What does NOT ship is every input that makes it a live selection tool: the slug
+  families it recognises, the forced-measurement watchlist and its per-family verdicts (the
+  negative results especially), the scoring weights as tuned, and the discovery and slate-advisory
+  tooling downstream of it, along with the launcher that consumes their output. Where a private
+  list was removed, an illustrative placeholder shows the shape and is labelled as one; the code is
+  runnable and honest, but it will not tell you which books to quote.
 - **Measurement results.** Fill rates, queue-position outcomes, realized per-fill economics, capture
   rates, and every A/B verdict live in operational logs and private notes, not here. The code
   publishes the *instrument*; the readings stay private.
