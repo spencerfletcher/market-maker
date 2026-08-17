@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+logs/
+
+# Never publish: operator-facing punch list (names private tooling) and the
+# quarantine holding files that are in scope but still carry private content.
+RECOMMENDATIONS.md
+_staging_todo/
+.DS_Store
