@@ -1,6 +1,6 @@
 # Prediction-Market Maker
 
-An asynchronous Python research and market-making engine for regulated prediction-market exchanges (**Polymarket US** and **Kalshi**). Built to model exact exchange microstructures, enforce exact arithmetic, and execute safely under venue edge cases, rate limits, and feed degradation.
+An asynchronous Python research and market-making engine for regulated prediction-market exchanges (**Polymarket US** and **Kalshi**). Built to model exact exchange microstructures, enforce exact arithmetic, and execute safely under venue edge cases, rate limits, and feed degradation. Public snapshot of a private working repo; commit history is squashed and market selection, tuning, and results are withheld.
 
 ---
 
