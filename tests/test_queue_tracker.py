@@ -1,9 +1,8 @@
-"""Behavioural tests for the traded-vs-cancelled queue attribution.
+"""Behavioural tests for the traded-vs-cancelled queue attribution (the private design notes M23).
 
 Every test drives real event sequences through `QueueTracker` and asserts on the verdict it
-produces. None of them assert a property of their own fixture — that pattern is what this suite
-exists to stamp out, because a test that re-derives its own setup passes against any
-implementation.
+produces. None of them assert a property of their own fixture — the pattern the private design notes M3 exists
+to stamp out.
 """
 from decimal import Decimal
 
@@ -130,7 +129,7 @@ def test_the_fill_verdict_rests_on_the_TAPE_alone_not_on_the_level_stream():
     identically `ahead − traded_ahead` for a filled order, so `cancelled_at_level` — which is
     level-wide and un-timestamped — carries no information the tape does not already give, and an
     earlier version that made it a corroboration threshold demoted textbook adverse fills to
-    AMBIGUOUS."""
+    AMBIGUOUS (mm-review B-3)."""
     qt = QueueTracker()
     _track_buy(qt, ahead=10)
     qt.on_trade(_trade("0.40", "2"))            # only 2 of the 10 ahead ever traded
@@ -283,7 +282,7 @@ def test_the_verdict_uses_the_TIGHTER_bound_not_the_looser_one():
 
     ⚠️ THIS TEST EXISTS BECAUSE ITS PREDECESSOR DID NOT PIN THE CLAIM. `traded_ahead_by_ts` sums a
     strict SUBSET of the same prints, so it can never exceed `traded_ahead`; the old `max` was
-    therefore a no-op, and swapping it for `min` left every test in this module green. The
+    therefore a no-op, and mm-review showed swapping it for `min` left all 23 tests green. The
     fixture below is built so the two bounds STRADDLE `ahead` — that is what makes the choice
     observable at all."""
     qt = QueueTracker()
@@ -307,7 +306,7 @@ def test_the_verdict_uses_the_TIGHTER_bound_not_the_looser_one():
 # ── the guards that must beat both findings ──
 
 def test_quoting_alone_at_a_price_is_not_a_trade_through_finding():
-    """`_queue_ahead` returns exactly 0 for any quote INSIDE the touch, so `best_traded >= 0` is
+    """B1. `_queue_ahead` returns exactly 0 for any quote INSIDE the touch, so `best_traded >= 0` is
     vacuously true and every improved fill would score TRADE_THROUGH having shown nothing — the
     verdict would just be restating `--improve-ticks`. Being alone at a price IS being the last
     resting order in front of whatever arrives, i.e. the NOT_TRADE_THROUGH hypothesis, not its
@@ -320,7 +319,7 @@ def test_quoting_alone_at_a_price_is_not_a_trade_through_finding():
 
 
 def test_a_tape_reconnect_while_we_rest_invalidates_the_row():
-    """A reconnect that SUCCEEDS leaves `subscribed` back at True, so `tape_ok` alone cannot see
+    """B3. A reconnect that SUCCEEDS leaves `subscribed` back at True, so `tape_ok` alone cannot see
     it — but every print during the outage is gone, which reads as a queue that pulled. One 3-second
     blip would otherwise turn every order resting across it into NOT_TRADE_THROUGH."""
     qt = QueueTracker()
@@ -489,7 +488,7 @@ def test_the_implied_cancel_stays_inside_the_bounds_the_identity_allows():
 
 
 def test_a_missing_own_fill_print_is_proof_the_tape_is_incomplete():
-    """The sharp case. Our own fill ALWAYS prints at our own price, so `traded < filled` is
+    """B3, the sharp case. Our own fill ALWAYS prints at our own price, so `traded < filled` is
     arithmetic proof a print was dropped — and it is exactly the shape that otherwise yields a
     confident NOT_TRADE_THROUGH off a negative `traded_ahead`."""
     qt = QueueTracker()

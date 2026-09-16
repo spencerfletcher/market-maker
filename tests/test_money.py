@@ -10,7 +10,8 @@ from decimal import Decimal
 
 import pytest
 
-from bot.core.money import CENT, CENTICENT, D, ceil_to, floor_to, from_float, is_zero
+from bot.core.money import (CENT, CENTICENT, D, ceil_to, dec_or_none, floor_to, from_float,
+                            is_zero, mean_or_none)
 
 
 # ── the constructor refuses the silent-error path ─────────────────────────────
@@ -30,7 +31,7 @@ def test_from_float_is_the_explicit_named_escape_hatch():
 
 # ── the fee bug: ceil at centicent precision ──────────────────────────────────
 def test_ceil_to_fixes_the_fee_overcharge():
-    # float: 0.07*0.5*0.5*10000 == 175.00000000000003 → bare ceil() → 176 → $0.0176 (overcharge)
+    # float: 0.07*0.5*0.5*10000 == 175.00000000000003 → bare ceil() → 176 → <n> (overcharge)
     assert math.ceil(0.07 * 0.5 * 0.5 * 10000) == 176, "the float bug still reproduces"
     # exact: the fee is 0.0175 on the nose, no pre-round guard required
     assert ceil_to(D("0.07") * D("0.5") * D("0.5"), CENTICENT) == D("0.0175")
@@ -77,3 +78,29 @@ def test_results_sit_exactly_on_the_grid(step):
 def test_grid_constants_match_the_venues():
     assert CENTICENT == Decimal("0.0001")   # Kalshi fee grid (schedule: "rounded to a centicent")
     assert CENT == Decimal("0.01")          # Poly fee grid (cent, on the ORDER TOTAL)
+
+
+# ── the shared venue-string parser (was 19 private `_dec` copies) ────────────
+def test_dec_or_none_blank_and_none_are_UNKNOWN_never_zero():
+    assert dec_or_none("") is None
+    assert dec_or_none(None) is None
+    assert dec_or_none("0") == Decimal(0)        # a measured zero is NOT blank
+
+
+def test_dec_or_none_unparseable_is_None_not_a_raise():
+    assert dec_or_none("n/a") is None
+    assert dec_or_none(object()) is None
+
+
+def test_dec_or_none_parses_the_string_form_exactly():
+    assert dec_or_none("0.4270") == Decimal("0.4270")
+    assert dec_or_none(" 0.47 ") == Decimal("0.47")   # venue padding is tolerated
+
+
+# ── mean_or_none (was 3 private `_mean` copies) ──────────────────────────────
+def test_mean_or_none_empty_is_None_not_zero():
+    assert mean_or_none([]) is None
+
+
+def test_mean_or_none_is_exact_in_Decimal():
+    assert mean_or_none([Decimal("0.1"), Decimal("0.2")]) == Decimal("0.15")

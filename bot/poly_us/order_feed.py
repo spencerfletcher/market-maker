@@ -1,10 +1,12 @@
 """Private order WebSocket feed — the fill-detection ACCELERATOR.
 
-Why this exists, measured twice: under a steady fill rate the REST read-back loop drifted behind
-the venue over a few hours, and in a faster run it booked all but ONE fill — leaving the tracker
-long against a venue-certified flat, a whole order's worth of INVISIBLE exposure. The defect is
-the unbooked tail at speed, not wholesale failure: polling mostly keeps up and sometimes doesn't,
-and "sometimes" scales with fill rate. The venue pushes order updates over the private WS — `orderSubscriptionUpdate`
+Why this exists, measured twice: at ~95 fills/hour (2026-07-30 <run-id>) the REST read-back loop
+fell 36 contracts behind the venue over 2.5h; at ~2.8 fills/MINUTE (the size-22 evening run) it
+booked 15 of ~16 fills but missed ONE 22-lot ask, leaving belief +22 against a venue-certified
+flat — and one missed 22-lot is a full cap of invisible exposure. (⛔ An earlier version of this
+line said "booked ZERO of six fills"; the tape refutes that — 15 rows, all late_booked=N. The
+defect is the unbooked tail at speed, not wholesale failure.) Polling mostly keeps up and
+sometimes doesn't, and "sometimes" scales with fill rate. The venue pushes order updates over the private WS — `orderSubscriptionUpdate`
 carries the full order body (`cumQuantity`, `avgPx`, the order-cumulative commission), which is
 exactly the payload the maker's existing `_book_fill` books from, idempotently (cum-deltas), so
 this feed can only ever make booking FASTER, never different.
@@ -12,8 +14,8 @@ this feed can only ever make booking FASTER, never different.
 ⛔ ACCELERATOR, NEVER REPLACEMENT. The REST poll and the delayed verify stay exactly as they
 are; a dead feed degrades to yesterday's behaviour, never to silence.
 
-LIVENESS — the echo watchdog, designed against days of recorded feed evidence rather than
-guessed at. Three venue facts drive the design:
+LIVENESS — the echo watchdog [redesigned 2026-07-31 against 41h of recorded evidence,
+the private design notes]. Three venue facts drive the design:
 
   1. The stream has NO snapshot, NO heartbeat and NO sequence number — 0 of 1,419 recorded
      messages across 4 subscribes, including a reconnect with orders resting. It is strictly
@@ -32,7 +34,7 @@ expectation when any event for that id arrives, and `check_liveness()` (called o
 cycle) declares the subscription dead when an expectation outlives ECHO_DEADLINE_S — then tears
 the connection down for the reconnect ladder. A cycle that placed nothing asserts nothing: the
 longest legitimate quiet gap recorded on a WORKING feed was 3,213s, which defeats every
-wall-clock threshold (the old `healthy()`'s 360s included). Replayed against a recorded silent
+wall-clock threshold (the old `healthy()`'s 360s included). Applied to the recorded 02:27:17
 death, this detects it 1–2 requote cycles after the first post-death placement (the deadline
 spans a cycle boundary) — instead of never.
 
@@ -67,12 +69,12 @@ DATA_AGE_BACKSTOP_S = 4 * 3600.0
 # expect_echo runs once, immediately after the create, so a seen id can only mean the echo
 # already arrived — a larger TTL is therefore strictly safer, and 30s covers a create round-trip
 # out to client-timeout scale (observed whole-cycle wall max 3.25s). The bound exists for memory
-# hygiene, applied at the point of use as defense-in-depth. Resist trimming it: a tighter TTL
-# only ever buys back bytes, and it buys them by shrinking the headroom over the observed max.
+# hygiene, applied at the point of use as defense-in-depth.
+# justified by the since-deleted cancel leg and left only ~1.5× headroom over the observed max]
 _SEEN_TTL_S = 30.0
 # A connection must live this long for an ordinary close to reset the reconnect ladder — a venue
 # accepting connect+subscribe and instantly closing would otherwise reconnect at 1s forever
-# (errors=0, deaths=0) — a fast way to earn an edge-rate-limit ban on the account.
+# (errors=0, deaths=0) on an account with a Cloudflare 1015 already on record [mm-review r1].
 # The shortest observed ALIVE duration is 1.9h ≈ 114× this, so no real connection can be
 # misclassified; the failure direction is only a slower reconnect, never a missed death.
 _MIN_HEALTHY_CONN_S = 60.0
@@ -148,12 +150,14 @@ class OrderFeed:
         this feed within ECHO_DEADLINE_S. The expectation is on the id, not the event type
         (a FILL clears it as well as a NEW).
 
-        Placements only: the fully-echoed evidence is placements → NEW. Cancel echoes ARE
-        observed on the tape, but the maker logs no per-order cancel timestamp, so neither the
-        echo RATE nor the echo LATENCY can be computed — and arming the watchdog on an
-        unvalidated behaviour risks exactly the false-death reconnect storm it exists to
-        prevent. Cancels are a fraction of a percent of quote actions, so the detection loss is
-        negligible; revisit once a run logs cancel times."""
+        Placements only [mm-review r1+r2]: the 60/60-echoed evidence is placements → NEW.
+        Cancel echoes ARE observed — r2 found 30 CANCELED echoes inside the night22b WS-alive
+        window, all on ids born in the same window on the run's own slugs — but the maker logs
+        no per-order cancel timestamp, so neither the echo RATE nor the echo LATENCY can be
+        computed, and arming the watchdog on an unvalidated behaviour risks exactly the
+        false-death reconnect storm it exists to prevent. Cancels were 0.6% of quote actions
+        on the measured slate, so the detection loss is negligible; revisit once a run logs
+        cancel times."""
         if not self._subscribed:
             return          # an action while the feed is down can never echo — asserts nothing
         seen_mono = self._seen_ids.get(order_id)
@@ -178,8 +182,8 @@ class OrderFeed:
             if self._last_msg_mono > oldest_action_mono:
                 # The feed HAS delivered since the action — this is not the recorded death mode
                 # (which goes totally silent), it is our parser failing to attribute an
-                # envelope the venue changed. Tearing down would storm on a working feed;
-                # the REST poll books everything regardless, so log loudly and
+                # envelope the venue changed. Tearing down would storm on a working feed
+                # [mm-review r1]; the REST poll books everything regardless, so log loudly and
                 # keep the connection.
                 for oid in expired:
                     del self._pending_echo[oid]
@@ -237,11 +241,11 @@ class OrderFeed:
         """Echoes in flight died with the connection (the stream has no backfill), so pending
         expectations must not survive into the next connection as instant false deaths — and
         ids SEEN on the dead connection must not absorb expectations on the fresh one, or a
-        stale seen-entry hides a real death for up to the TTL.
+        stale seen-entry hides a real death for up to the TTL [mm-review r1].
 
         `_last_msg_mono` is deliberately NOT cleared: a stale value necessarily predates any
         action taken on the next connection, so it can never wrongly rescue an echo-death —
-        monotonic ordering makes the carry-over safe."""
+        monotonic ordering makes the carry-over safe [mm-review r2]."""
         self._subscribed = False
         self._pending_echo.clear()
         self._seen_ids.clear()

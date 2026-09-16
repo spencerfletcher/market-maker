@@ -39,8 +39,8 @@ _REST_PATH = "/trade-api/v2"
 _FOK_KILLED = "fill_or_kill_insufficient_resting_volume"
 
 # Hard bound on an ORDER round-trip. aiohttp's DEFAULT is total=300s (5 MINUTES) — an unexamined
-# default from before anyone had measured an RTT. A probe against the live order endpoint puts the
-# real round-trip in the low tens of milliseconds, so 300s is four orders of magnitude of slack.
+# default from before anyone had measured an RTT. The measured Kalshi order RTT is median 17ms /
+# max 24ms [scripts/order_rtt_probe, prod 2026-07-14], so 300s is 12,500x the worst case.
 # Why it matters: _execution_lock is ONE GLOBAL lock (runner.py) shared by kalshi_arb, poly_arb,
 # ladder and macro, and poly_first fires POLY FIRST. So a hung Kalshi POST means we sit on a NAKED,
 # unhedged Poly leg while EVERY trading path in the bot is frozen — for up to five minutes.
@@ -59,7 +59,7 @@ _POSITIONS_MAX_PAGES = 20
 # (v1_side, v1_action) → V2 book side. V2 is YES-ONLY: `bid` buys YES, `ask` sells YES; there is
 # no `action` field and no "buy NO". Buying NO is expressed as selling YES at the COMPLEMENT.
 # The NO side flips BOTH the book side AND the price — flipping only one buys the wrong side.
-# CONFIRMED BY THE EXCHANGE: we sent {side:"ask", price:"0.3000"} holding zero YES and
+# CONFIRMED BY THE EXCHANGE 2026-07-14: we sent {side:"ask", price:"0.3000"} holding zero YES and
 # Kalshi's fill record came back {"side":"no","no_price_dollars":"0.7000"} with position_fp=-1.00.
 _V2_BOOK_SIDE = {
     ("yes", "buy"): "bid",    # buy YES  @ p        → bid @ p
@@ -141,14 +141,15 @@ def kalshi_avg_fill_cost(resp, side: str) -> float | None:
         average_fee_paid    — the real fee. **Per contract or per order? WE DO NOT KNOW.**
     [The price VERIFIED on a real prod fill: 1 YES @ 0.4270 → 0.4270/contract.]
 
-    ✅ RESOLVED — MEASURED PER-CONTRACT. A demo multi-contract fill settled it: at fill_count=2 the
-    reported `average_fee_paid` matched the per-contract prediction and sat a clean 2× below the
-    order total, agreeing with Kalshi's docs. The resolver below picked per-contract on that real
-    response. It keeps auto-detecting anyway — robust if the basis ever changes, or if demo ≠ prod.
-    The reasoning that made NOT guessing the right call is preserved:
+    ✅ RESOLVED 2026-07-17 — MEASURED PER-CONTRACT. A demo multi-contract fill (scripts/
+    kalshi_demo_probe, fill_count=2 @ 0.15 → average_fee_paid 0.0089/contract; the order-total would
+    be 0.0179, a clean 2× gap) settled it, matching Kalshi's docs. The resolver below picked
+    per-contract on that real response. Kept auto-detecting anyway — robust if the basis ever
+    changes, or if demo ≠ prod (a prod fill would promote demo → prod-verified). The reasoning that
+    made NOT guessing the right call is preserved verbatim:
 
     ⚠️ `average_fee_paid`'s basis WAS unmeasurable read-only — the field
-    exists on the create response and on NO other endpoint (/portfolio/fills
+    exists on the create response and on NO other endpoint (checked 2026-07-16: /portfolio/fills
     reports `fee_cost`, /portfolio/orders reports `taker_fees_dollars`, neither is this field).
     Our only real fixture is `fill_count=1`, where **per-contract and per-order are arithmetically
     identical**, so the measurement that "verified" this could never have discriminated. The
@@ -160,14 +161,13 @@ def kalshi_avg_fill_cost(resp, side: str) -> float | None:
     in.
 
     So we DON'T guess: the response identifies itself. The fee FORMULA is verified to the
-    centicent against real fills (tests/test_kalshi_fee_model.py) and the two candidates differ
+    centicent against 7 real fills (tests/test_kalshi_fee_model.py) and the two candidates differ
     by a factor of `fill_count`, so we compute both and take whichever the venue's own number
     matches. At fill_count=1 they coincide and the answer is the same either way. Guessing is not
-    an option worth taking, and it is wrong in BOTH directions: reading a per-contract fee as an
-    order total UNDERSTATES cost by a factor of `fill_count` — eating a large fraction of the whole
-    minimum edge and flattering `realized_settled`, the designated sizing authority — while the
-    mirror mistake OVERSTATES it by the same factor, which would make every hedge book as
-    catastrophically unprofitable and trip the cumulative loss cap on healthy trades.
+    an option worth taking: at the 8-share ramp, reading a per-contract fee as an order total
+    UNDERSTATES cost by ~1.5c/share — 77% of the 2% minimum edge, flattering `realized_settled`,
+    the designated sizing authority — while the mirror mistake OVERSTATES by ~12c/share, which
+    would make every hedge book as catastrophically unprofitable and trip the cumulative loss cap.
 
     Matching NEITHER candidate returns None (the caller falls back) and logs loudly: it means the
     fee schedule moved or the field changed, and either way we must not price a real position off
@@ -199,7 +199,7 @@ def kalshi_avg_fill_cost(resp, side: str) -> float | None:
     # V2's average_fill_price is ALWAYS YES-space; a NO leg's real per-contract cost is the
     # COMPLEMENT (1 − px) + fee. The SEND side complements (_v2_order_params); the READ side must
     # too, or every NO leg books the wrong cost into trades.log → realized_settled → the loss cap
-    # (demo-caught: a NO buy at a no-ask of 0.99 came back average_fill_price 0.01). The fee is
+    # [demo-caught 2026-07-17: NO buy @ no-ask 0.99 came back average_fill_price 0.01]. The fee is
     # symmetric in p(1−p), so only the price flips.
     px_side = complement(px) if side == "no" else px   # exact YES-space wire → side space
     return px_side + fee_pc
@@ -214,7 +214,7 @@ def _kalshi_px_and_fee(px: float, fee: float, fill: float,
     Shared by the BUY reader (cost = px + fee) and the SELL reader (proceeds = px − fee), because
     the basis question is identical for both and answering it twice would let them drift.
     """
-    # Pure fee math from bot.kalshi.fees (deliberately decoupled from the arb engine) —
+    # Pure fee math from bot.kalshi.fees (decoupled from the arb engine 2026-08-13) —
     # kept a local import to preserve this function's original lazy-load shape.
     from bot.kalshi.fees import _kalshi_taker_fee
     per_contract = _kalshi_taker_fee(px, int(fill) or 1)
@@ -507,9 +507,8 @@ class KalshiClient:
         Place an order on Kalshi via the **V2** endpoint (`POST /portfolio/events/orders`).
 
         The V1 endpoint (`/portfolio/orders`) is DEAD — 410 Gone `deprecated_v1_order_endpoint`
-        — and it was found by an RTT probe, not by the bot, because ALL live order placement was
-        broken and INVISIBLE: DRY short-circuits before the network, so nothing ever hit the dead
-        endpoint. A code path only exercised in production is a path with no test coverage at all.
+        (found 2026-06-26 by order_rtt_probe; ALL live order placement was broken and invisible
+        because DRY short-circuits before the network). Migrated 2026-07-14.
 
         The CALLER-FACING signature is deliberately UNCHANGED from V1 — side/action with the price
         in THAT side's own space — so every call site (fire, unwind, ladder) keeps its existing
@@ -570,7 +569,7 @@ class KalshiClient:
     async def cancel_order(self, order_id: str) -> dict:
         """Cancel a RESTING order — V2: `DELETE /portfolio/events/orders/{order_id}` (same V2 base as
         create; the V1 `/portfolio/orders/{id}` is DEAD → 410 deprecated_v1_order_endpoint, confirmed
-        live via a demo round-trip, which is what caught the V1 path). Only resting-maker
+        live via the 2026-07-19 demo round-trip which caught the V1 path). Only resting-maker
         strategies need this — the FOK/IOC fire path never rests, so it never cancels. DRY
         short-circuits. A wrong path still fails loud (4xx RuntimeError), never silent."""
         if config.DRY_RUN:
@@ -590,17 +589,16 @@ class KalshiClient:
 
         THE AUTHORITATIVE SOURCE, and it is NOT the fee-schedule PDF. `/series/{s}` carries a
         `fee_type` field: **`quadratic_with_maker_fees` = maker charged, `quadratic` = maker free**.
-        Both halves are confirmed against the live endpoint AND against real fills.
+        [VERIFIED 2026-07-19 against the live endpoint.]
 
         ⚠️ The discriminator is `fee_type`, NOT `fee_multiplier` — the multiplier is `1` on BOTH
         kinds, so reading it instead silently marks everything as charged.
 
-        ⚠️ WHY THIS EXISTS: the published fee-schedule PDF's maker table is a strict SUBSET of what
-        the API reports — the API lists substantially more charged series than the document does. So
-        inferring "maker-free" from ABSENCE in the PDF is WRONG, and it did mislabel real series
-        (`KXNBAGAME`, `KXNHLGAME` — both `quadratic_with_maker_fees`) as free. A maker strategy built
-        on that would pay a fee on every fill it believed was free, which at a tight quoted width is
-        the whole edge. Ask the venue; never infer a fee from a document's silence."""
+        ⚠️ WHY THIS EXISTS: docs/kalshi-fee-schedule.pdf Table 2 lists 76 maker-charged series; the
+        API lists **130**. The PDF is a strict subset, so inferring "maker-free" from ABSENCE in the
+        PDF is WRONG — it mislabelled `KXNBAGAME` and `KXNHLGAME` (both `quadratic_with_maker_fees`)
+        as free, and a maker strategy would have paid ~0.44c/fill it thought it was avoiding. Ask the
+        venue; never infer a fee from a document's silence."""
         try:
             r = await self._get(f"/series/{series}")
         except Exception as exc:
@@ -619,7 +617,7 @@ class KalshiClient:
         ⚠️ IT RETURNED `[]` UNCONDITIONALLY, FOREVER. The body was
         `data.get("positions", [])`, but the response is
         `{cursor, event_positions, market_positions}` — there is no top-level `positions` key
-        (confirmed against the live endpoint). So the reconciler's Kalshi half reported
+        [VERIFIED 2026-07-16 against the live endpoint]. So the reconciler's Kalshi half reported
         "confirmed flat" on every poll regardless of what we actually held, which is the exact
         fail-open its docstring forbids ("never [] on failure — an empty list means 'confirmed
         flat' and would mask exactly what we're hunting"). Every guard downstream — the isinstance
@@ -636,12 +634,12 @@ class KalshiClient:
         `market_positions` is the right array, not `event_positions`: its items carry `ticker` and
         `position_fp`, which is exactly what the caller parses. Sign is the caller's problem and it
         handles it — Kalshi books a NO position as NEGATIVE `position_fp` (short YES == long NO)
-        and `_first_qty` takes the absolute value — which matters, because the NO side is the
-        MAJORITY of the directions this bot takes, not a rare case.
+        and `_first_qty` takes the absolute value, which matters because 209 of our 267 would-fires
+        are the NO side.
 
         Paginates because the endpoint is cursor-based and page 1 alone would under-read — the
         same trap the Poly side of the reconciler paginates to avoid. `cursor` is `''` when there
-        are no more pages.
+        are no more pages [VERIFIED 2026-07-16].
         """
         out: list[dict] = []
         cursor, pages = "", 0
@@ -677,11 +675,10 @@ class KalshiClient:
         leaves a resting order with NO captured id — invisible to a tracked-id cancel, and real
         exposure. Asking the venue "what is actually resting?" is the only way to reach it.
 
-        Mirrors get_positions' fail-closed contract EXACTLY, and the envelope is confirmed against
-        the live endpoint: `GET /portfolio/orders` → `{cursor, orders}`; items carry `order_id`,
-        `ticker`, `status`, `*_count_fp`. `status=resting` filters SERVER-side — verified to
-        actually narrow the result, so it is a real filter and not a no-op parameter the API
-        ignores. RAISES rather than returning `[]` on any shape it does not recognise —
+        Mirrors get_positions' fail-closed contract EXACTLY: [VERIFIED 2026-07-19 against the demo
+        endpoint] `GET /portfolio/orders` → `{cursor, orders}`; items carry `order_id`, `ticker`,
+        `status`, `*_count_fp`. `status=resting` filters server-side (14 resting vs 71 unfiltered on
+        the probe account). RAISES rather than returning `[]` on any shape it does not recognise —
         a shape we cannot read is NOT evidence of "nothing resting", and treating it as such would
         silently skip the very strays the sweep exists to catch (the same fail-open that `[]`-forever
         made of the reconciler). Cursor is `''` when there are no more pages."""
@@ -720,9 +717,8 @@ class KalshiClient:
         `min_ts` (epoch seconds) scopes to a run; `tickers` filters client-side.
 
         Unlike position deltas — which only reveal that inventory MOVED, valued at the mid — a fill
-        record carries the TRUTH the maker thesis turns on — confirmed field-by-field against the
-        live endpoint: the actual `yes_price_dollars`/`no_price_dollars` we filled at, the real
-        `fee_cost`, `is_taker`
+        record carries the TRUTH the maker thesis turns on: [VERIFIED 2026-07-19 vs the demo endpoint]
+        the actual `yes_price_dollars`/`no_price_dollars` we filled at, the real `fee_cost`, `is_taker`
         (a `true` on a post_only quote would mean a maker leaked into a take), and `ts`. Envelope is
         `{cursor, fills}`.
 

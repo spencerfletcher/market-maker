@@ -8,11 +8,12 @@ List and cancel resting Polymarket US orders.
     DRY_RUN=false .venv/bin/python -m scripts.poly_cancel --cancel <ID> --execute
     DRY_RUN=false .venv/bin/python -m scripts.poly_cancel --all --execute
 
-⛔ WHY THIS EXISTS. The maker's own recovery refusal tells the operator to cancel a resting
-order — and for a while the repo had no tool that could cancel one. The order-listing tool is
-read-only; the only way through was a one-off script written against the money path under
-pressure. **A maker whose documented recovery step has no implementation is a maker that cannot
-be recovered at 3am.** Ship the recovery tool at the same time as the refusal that demands it.
+⛔ WHY THIS EXISTS. On 2026-08-09 the maker refused to start with
+`RECOVERY: RECOVER (live_venue_state) — cancel (always safe): BRKM6TS8YB9E`, i.e. its own refusal
+told the operator to cancel a resting order — and **the repo had no tool that could cancel one**.
+`scripts.poly_us_orders` is read-only (and ignores `--help`, printing the trade tape regardless).
+The only way through was a one-off script written against the money path at 06:09 UTC. A maker
+whose documented recovery step has no implementation is a maker that cannot be recovered at 3am.
 
 ⛔ CANCEL IS THE SAFE DIRECTION and this tool is deliberately EASY to run: removing a resting
 order can only reduce exposure, never create it. That is why there is no `--i-understand-real-money`
@@ -47,7 +48,9 @@ def _describe(order: dict) -> str:
 
 
 async def run(args: argparse.Namespace) -> int:
-    client = PolyUSClient()
+    # `allow_during_ban`: a rate limit must never make an open position unmanageable —
+    # this tool moves or verifies real inventory by hand (bot/core/venue_budget.py).
+    client = PolyUSClient(allow_during_ban=True)
 
     # ⛔ RAISES on an unrecognised shape rather than returning [] — "no open orders" and "we could
     # not tell" must never be the same answer. Let it propagate: a cancel tool that reports

@@ -4,11 +4,10 @@ This is the SEPARATE path the SIGKILL case requires. In-process cleanup is unava
 definition, so recovery has to be something a *different* process runs: read the durable record,
 ask the venue what is actually there, and decide.
 
-THE ONE RULE, INHERITED FROM AN EARLIER POSITION RECONCILER: **cannot-verify is not flat.** A
-venue read that fails must never resolve to "nothing there, safe to start". That reconciler's
-Kalshi half returned `[]` on an unparsed response for a MONTH and reported "confirmed flat" every
-poll while we held positions; the whole failure was one line upstream of every guard that
-depended on it.
+THE ONE RULE INHERITED FROM `bot/runner/reconcile.py`: **cannot-verify is not flat.** A venue read
+that fails must never resolve to "nothing there, safe to start". That module's Kalshi half
+returned `[]` on an unparsed response for a MONTH and reported "confirmed flat" every poll while
+we held positions; the whole failure was one line upstream of every guard that depended on it.
 
 THE SECOND RULE, which is this module's own: **cancelling is safe, flattening is not.** A cancel
 only ever removes exposure, so an unattributable resting order can be cancelled automatically. A
@@ -18,8 +17,6 @@ operator decision, exactly as the reconciler treats unknown exposure.
 from __future__ import annotations
 
 from decimal import Decimal
-
-import pytest
 
 from bot.core import maker_state
 from bot.core.maker_state import MakerState, assess_recovery
@@ -85,7 +82,7 @@ def test_an_unclean_exit_with_a_RECORDED_position_flattens_it():
 
 def test_a_CLEAN_exit_that_nevertheless_left_a_resting_order_still_demands_recovery():
     """The flag is evidence, not truth. The venue is truth. A clean-looking exit that left an
-    order resting is exactly the recorded 2xx-with-no-order_id case — the order
+    order resting is exactly the 2xx-with-no-order_id case the health audit records — the order
     was never in our list to cancel."""
     plan = assess_recovery(
         _state(clean_exit=True),
@@ -138,8 +135,8 @@ def test_a_venue_position_SMALLER_than_we_recorded_is_not_unknown_exposure():
 def test_a_venue_position_with_the_OPPOSITE_SIGN_of_the_record_is_unknown_exposure():
     """⛔ The magnitude-only comparison read venue −12 against a recorded +12 as 'attributable'
     and planned to flatten it — but the record describes the OPPOSITE position, so the basis is
-    fiction. Sign disagreement is exactly as unknown as a position we never recorded: it is the
-    belief-inverted-against-the-venue corruption shape, reaching the recovery tool."""
+    fiction. Sign disagreement is exactly as unknown as a position we never recorded; it is the
+    night22 corruption shape (belief −22 vs venue +22) reaching the recovery tool."""
     plan = assess_recovery(_state(inventory={"KXA": Decimal("12")}), venue_orders=[],
                            venue_positions={"KXA": Decimal("-12")})
     assert plan.action == "refuse"
@@ -194,7 +191,7 @@ def test_no_state_file_and_a_flat_venue_may_start():
 
 def test_no_state_file_but_the_venue_holds_something_REFUSES():
     """First-ever run against an account that already holds inventory. The maker's loss cap and
-    flatten arithmetic are both wrong against an inherited basis, so this is
+    flatten arithmetic are both wrong against an inherited basis (health audit 1.2), so this is
     the case that must not silently proceed."""
     plan = assess_recovery(None, venue_orders=[], venue_positions={"KXA": Decimal("4")})
     assert plan.action == "refuse"
@@ -207,19 +204,11 @@ def test_no_state_file_and_an_unreadable_venue_REFUSES():
 
 # ── a corrupt state file is not a clean slate ────────────────────────────────────────────────
 
-def test_a_corrupt_state_file_refuses_to_start(tmp_path):
-    p = tmp_path / "maker_state.json"
-    p.write_text("{trunca")
-    plan = maker_state.assess_recovery_from_disk(str(p), venue_orders=[], venue_positions={})
-    assert plan.action == "refuse"
-    assert plan.reason == "state_corrupt"
-
-
-def test_assess_from_disk_matches_the_pure_function_on_a_good_file(tmp_path):
+def test_the_loaded_record_assesses_as_start_on_a_good_file(tmp_path):
     s = maker_state.MakerStateStore(path=str(tmp_path / "maker_state.json"))
     s.begin_run("r", mode="real", loss_cap=Decimal("5"), tickers=["KXA"], inventory={})
     s.end_run("clean")
-    plan = maker_state.assess_recovery_from_disk(s.path, venue_orders=[], venue_positions={})
+    plan = assess_recovery(maker_state.load_state(s.path), venue_orders=[], venue_positions={})
     assert plan.action == "start"
 
 

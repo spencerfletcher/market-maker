@@ -29,7 +29,7 @@ class KalshiMarket:
     expected_expiration_time: str = ""  # ISO8601 — actual expected game-end + settlement
     yes_bid: float = 0.0             # current YES bid (from REST, for cache priming)
     yes_ask: float = 0.0             # current YES ask (from REST, for cache priming)
-    price_tick: float = 0.01         # min price increment (price_ranges[].step; fallback 1¢)
+    price_tick: float = 0.01         # min price increment (price_ranges[].step; fallback <n>)
     volume_24h: float = 0.0          # contracts traded in 24h — flow proxy for MM target ranking
 
 
@@ -47,8 +47,8 @@ def price_tick_at(market: dict, price: float) -> float:
     """The market's min price increment AT `price`.
 
     ⚠️ KALSHI'S TICK IS PRICE-DEPENDENT. There is no per-market tick field; each market carries a
-    `price_ranges` STEP LADDER plus a `price_level_structure` label. Two shapes exist, both
-    confirmed live against `/markets/{ticker}`:
+    `price_ranges` STEP LADDER plus a `price_level_structure` label. Two shapes exist
+    [VERIFIED 2026-07-19 live vs `/markets/{t}`, 15 series]:
       · `linear_cent`       → one range, step 0.01 throughout.
       · `tapered_deci_cent` → step 0.001 below 0.10 AND above 0.90, but **0.01 in between**
                               (elections/politics: SENATEIA, SENATETX, CONTROLH/S, KXPRESNOMR).
@@ -68,16 +68,17 @@ def price_tick_at(market: dict, price: float) -> float:
 def _parse_price_tick(market: dict) -> float:
     """The market's tick in the CONTESTED BAND — the one scalar tick worth carrying per market.
 
-    ⚠️ This read `price_ranges[0].step` and asserted "every binary market is `linear_cent`". That is
-    FALSE: on a `tapered_deci_cent` market `price_ranges[0]` is the **0.00–0.10 tail**, so it
-    returned **0.001** for a market whose tick at any tradeable price is **0.01**. Consequence, had
-    one ever reached the fire path: `kalshi_tick_floor` would floor onto a 0.001 grid and Kalshi
-    rejects an off-tick price with HTTP 400 — the order simply never rests.
+    ⚠️ This read `price_ranges[0].step` and asserted "every binary market is `linear_cent` today".
+    That is FALSE as of 2026-07-19: on a `tapered_deci_cent` market `price_ranges[0]` is the
+    **0.00–0.10 tail**, so it returned **0.001** for a market whose tick at any tradeable price is
+    **0.01**. Consequence, had one ever reached the fire path: `kalshi_tick_floor` would floor onto a
+    0.001 grid and Kalshi rejects an off-tick price with HTTP 400 — the order simply never rests.
 
-    ⚠️ The evidence for "our markets are all `linear_cent`" is thinner than it looks, and the trap is
-    worth naming: a *logged* tick of 0.01 cannot distinguish "read the ladder correctly" from "took
-    the 0.01 fallback below". The two are observationally identical, so a logged-tick census can
-    never confirm the ladder read — only a direct read of `price_ranges` per market can.
+    LATENT, never live — but state the evidence precisely, because it is thinner than it looks. What
+    is MEASURED: all 182 `would_fire` rows carrying the column logged `kalshi_tick=0.0100`, and of
+    the 12 series in `matcher._SETTLEMENT_EQUIVALENT` exactly ONE (KXNPBGAME) was in the 2026-07-19
+    ladder scan. The other 11 are UNMEASURED — inferred `linear_cent` from the logged ticks, which
+    cannot distinguish "read the ladder correctly" from "took the 0.01 fallback".
 
     Safe-direction in BOTH directions the tick feeds, for two different reasons — the "it's cheaper"
     argument covers only the buy leg:
@@ -92,7 +93,7 @@ def _parse_price_tick(market: dict) -> float:
     ⚠️ RESIDUAL: a scalar tick read at 0.50 is wrong for any ladder whose TAIL step is coarser than
     its band step. No such shape is known, but none is ruled out either. On the buy leg that costs a
     fill; on the UNWIND leg an off-tick sell is rejected → strand → global pause. Closing it means
-    calling `price_tick_at(market, price)` at the send site."""
+    calling `price_tick_at(market, price)` at the send site — see the private design notes."""
     return price_tick_at(market, _TICK_REFERENCE_PRICE)
 
 

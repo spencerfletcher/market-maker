@@ -7,16 +7,17 @@ WHY THIS EXISTS
 ───────────────
 Every rail in this package — the alert-delivery ledger, the heartbeat, the maker's crash state —
 has the same requirement: *the record must already be on disk when the process dies*, because the
-death that actually happens is SIGKILL under memory pressure — the one death that always strands
-live orders. SIGKILL runs no `finally`, no `atexit`, no signal handler. A rail that writes its
-state during cleanup protects nothing against it.
+death this repo actually suffers is SIGKILL (six OOM kills on record; `bot/kalshi/maker.py` names
+SIGKILL as the one death that always strands live orders). SIGKILL runs no `finally`, no `atexit`,
+no signal handler. A rail that writes its state during cleanup protects nothing against it.
 
-The state writers here started with the atomic half right and the durable half missing: tmp file →
+`PositionTracker._save` had the atomic half right and the durable half missing: tmp file →
 `os.replace` is ATOMIC (a concurrent reader sees the old bytes or the new ones, never a splice) but
 after `os.replace` returns, both the data and the rename may still be only in the page cache. A
 power loss or a hard reset can therefore leave the OLD contents, a zero-length file, or garbage —
 which is what makes "refuse to boot on a corrupt state file" a routine event rather than a rare
-one. This module closes that gap, and every state writer routes through it.
+one. the private design notes 1.3 names the gap; this module closes it, and
+`PositionTracker._save` now routes through it.
 
 Durability needs THREE steps, and skipping any one of them still passes a round-trip test:
   1. write to a sibling tmp file, then `fsync` THE FILE       → the bytes are on the platter
@@ -41,9 +42,9 @@ from typing import Any
 #
 # ⛔ ABSOLUTE ON PURPOSE. A relative operational path is not a cosmetic issue in this repo: the
 # loss caps read `logs/execution_pnl.csv` relative to the cwd, so any launch from another directory
-# gives FileNotFoundError → 0.0 loss → both caps permanently and SILENTLY inert. Same class as a
-# state file that exists at two paths: the pre-flight reads the empty copy and prints "clean" while
-# the real one holds live strand records. One resolver, one answer.
+# gives FileNotFoundError → 0.0 loss → both caps permanently and SILENTLY inert
+# (the private design notes 1.4). Same class as the `bot_state.json` root-vs-`bot/` split
+# that printed "clean" over three live strand records. One resolver, one answer.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
@@ -57,8 +58,8 @@ class StateCorrupt(Exception):
 
     A DISTINCT condition from "the file is absent", and the distinction is load-bearing: absent
     means "no state yet, a fresh start is fine", corrupt means "there was state and we cannot read
-    it" — i.e. CANNOT-VERIFY, which must never resolve to "we're flat". Collapsing the two is how a
-    crashed writer becomes a clean-looking startup.
+    it" — i.e. CANNOT-VERIFY, which `bot/runner/reconcile.py` establishes must never resolve to
+    "we're flat". Collapsing the two is how a crashed writer becomes a clean-looking startup.
     """
 
 
@@ -82,14 +83,22 @@ def _fsync_dir(path: str) -> None:
         os.close(fd)
 
 
-def write_bytes_durable(path: str, data: bytes) -> None:
+def write_bytes_durable(path: str, data: bytes, *, mode: int | None = None) -> None:
     """Atomically AND durably replace `path` with `data`. Creates the parent directory.
 
     The tmp file is a SIBLING (same directory), not `/tmp`: `os.replace` is only atomic within one
-    filesystem, and `/tmp` is commonly a separate mount — a cross-device rename raises, and "fall
-    back to a copy" would reintroduce the torn-write window. It also matters for a second reason:
-    where `/tmp` is a tmpfs it is RAM-backed, so staging through it spends the very resource the
-    memory guard exists to protect.
+    filesystem, and on this box `/tmp` is a separate tmpfs — a cross-device rename raises, and
+    "fall back to a copy" would reintroduce the torn-write window. It also matters for a second
+    reason here: `/tmp` is RAM-backed on a 1.9 GB box, so staging through it spends the very
+    resource the OOM guard exists to protect.
+
+    `mode` (octal, e.g. 0o644) sets the PUBLISHED file's permissions. `tempfile.mkstemp` creates
+    0600 REGARDLESS OF UMASK — by design, and a `UMask=` systemd drop-in therefore cannot change
+    it. That default is right for private state (the maker's crash record, the loss-cap ledger) and
+    is what `mode=None` keeps, byte-for-byte. It is WRONG for a file whose whole purpose is to be
+    read by another process under another user — see `bot/core/heartbeat.py` and incident
+    2026-08-28. The chmod happens BEFORE `os.replace`, so the published name never transitions
+    through the wrong mode: a reader either sees the old file or the new one at its final mode.
     """
     directory = os.path.dirname(os.path.abspath(path)) or "."
     os.makedirs(directory, exist_ok=True)
@@ -99,6 +108,8 @@ def write_bytes_durable(path: str, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())        # (1) bytes durable BEFORE the rename publishes them
+        if mode is not None:
+            os.chmod(tmp, mode)         # (1b) final mode set on the TMP, before it is published
         os.replace(tmp, path)           # (2) atomic publish
         tmp = ""                        # renamed away; nothing left to clean up
         _fsync_dir(path)                # (3) the RENAME durable — the step everyone drops
@@ -106,13 +117,15 @@ def write_bytes_durable(path: str, data: bytes) -> None:
         if tmp:
             try:
                 os.unlink(tmp)
-            except OSError as exc:      # pragma: no cover - unlink of our own fresh tmp
+            except OSError as exc:      # unlink of our own fresh tmp
                 if exc.errno != errno.ENOENT:
                     raise
 
 
-def write_json_durable(path: str, obj: Any, *, indent: int | None = 2) -> None:
-    """Atomically + durably write `obj` as JSON.
+def write_json_durable(path: str, obj: Any, *, indent: int | None = 2,
+                       mode: int | None = None) -> None:
+    """Atomically + durably write `obj` as JSON. `mode` is passed through to
+    `write_bytes_durable` — see there for why a caller would set it.
 
     Serialises FULLY IN MEMORY first, deliberately. Streaming `json.dump` into the tmp file would
     leave a half-written tmp behind on an unserialisable value — and, worse, has already replaced
@@ -120,7 +133,7 @@ def write_json_durable(path: str, obj: Any, *, indent: int | None = 2) -> None:
     happens before any file is touched, so the previous good state is untouched by construction.
     """
     payload = json.dumps(obj, indent=indent, sort_keys=False).encode("utf-8")
-    write_bytes_durable(path, payload)
+    write_bytes_durable(path, payload, mode=mode)
 
 
 def read_json_or_none(path: str) -> Any | None:

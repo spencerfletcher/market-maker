@@ -3,9 +3,9 @@
 ⛔ **WHY THIS EXISTS.** `aiohttp.ClientResponseError.__repr__` embeds `RequestInfo`, whose third field
 is the OUTGOING HEADER DICT — for this repo that is `KALSHI-ACCESS-KEY` and
 `KALSHI-ACCESS-SIGNATURE`. So `f"...: {exc!r}"` on any failed Kalshi call writes the live API key id
-into whatever that log line reaches. It already happened: the production key id appeared verbatim,
-several times over, in a plain log file. That instance was contained because the file happened to be
-untracked and nothing reached git history — but the MECHANISM was not contained by anything.
+into whatever that log line reaches. It already happened: **7 occurrences of the production key id in
+`logs/maker_market_scan.log`** (found 2026-07-26 by set-membership; the file was untracked and nothing
+reached git history, so the exposure was contained — the MECHANISM was not).
 
 Three things made it worse than a stray log line:
   · `logs/` is deliberately git-TRACKED, so one `git add -A` writes a permanent copy into history;

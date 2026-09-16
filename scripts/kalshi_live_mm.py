@@ -19,8 +19,9 @@ stray sweep. `maker.main()` now REFUSES TO START on that mismatch rather than ru
 So the flag's job is exactly one thing — set the env below so `config` comes up non-DRY — and any
 disagreement between the two is a hard stop, not a downgrade.
 
-Usage is `python -m scripts.kalshi_live_mm ...`; the implementation lives in
-`bot/kalshi/maker.py` and this file is only the arming shim.
+Usage is unchanged — `python -m scripts.kalshi_live_mm ...` still works, and so does every command
+in docs/ and in the analysis log. The history of the implementation moved with the file: use
+`git log --follow bot/kalshi/maker.py`.
 """
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ from bot.kalshi import maker  # noqa: E402 — ordering is the point; see the mo
 main = maker.main
 
 if __name__ == "__main__":
-    # A plain `kill` (SIGTERM) must run the teardown and unwind, not strand resting orders.
+    # M17: make a plain `kill` (SIGTERM) unwind the teardown instead of stranding resting orders.
     # Installed here at the process entry point, before the loop starts, on the main thread.
     maker._install_sigterm_handler()
     asyncio.run(main())

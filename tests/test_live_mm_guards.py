@@ -22,7 +22,7 @@ SRC = inspect.getsource(mm.main)
 # The run that 429'd within minutes and tripped its fail-closed halt was markets=3 @ 6s ≈ 15.3 u/s.
 
 # Bind to the REAL function. Re-implementing the formula here is how the first version of this
-# file passed while the gate was mutated to hardcode markets=3.
+# file passed while the gate was mutated to hardcode markets=3 (money-path-review section 8).
 _units_per_s = _rate_limit_units_per_s
 
 
@@ -192,10 +192,10 @@ def test_the_flag_is_read_as_a_plain_attribute_so_a_renamed_dest_raises():
     assert 'getattr(args, "i_understand_real_money"' not in SRC
 
 
-# ── SIGTERM must run the teardown, not strand orders ─────────────────────────────────────────────
+# ── M17: SIGTERM must run the teardown, not strand orders ────────────────────────────────────────
 
 def test_sigterm_handler_raises_keyboardinterrupt_so_the_teardown_finally_runs():
-    """A plain `kill` (SIGTERM) terminates without unwinding, so the cancel-all + stray-sweep
+    """M17: a plain `kill` (SIGTERM) terminates without unwinding, so the cancel-all + stray-sweep
     finally never runs and real orders are left resting with the loss cap dead. The handler makes
     SIGTERM raise KeyboardInterrupt — the exact exception SIGINT (Ctrl-C) already relies on to unwind
     that finally — so `kill` and Ctrl-C take the identical teardown path. (SIGKILL is uncatchable and
@@ -217,14 +217,14 @@ def test_sigterm_handler_raises_keyboardinterrupt_so_the_teardown_finally_runs()
 
 
 def test_SIGHUP_also_unwinds__an_ssh_drop_is_the_likeliest_strand():
-    """⛔ SIGHUP WAS THE HOLE, and it is the signal an attended run actually meets. The kernel
+    """⛔ B4 — SIGHUP WAS THE HOLE, and it is the signal an attended run actually meets. The kernel
     sends it to every process in the foreground group when the controlling terminal goes away: an
     SSH drop, a closed lid, a killed terminal. Its default disposition is terminate-WITHOUT-unwinding,
     so before this the teardown's cancel-all + venue stray-sweep never ran and live post-only quotes
     were left resting with the loss cap dead — the exact strand the SIGTERM handler exists to
     prevent, reached by the likeliest route rather than the one anyone tests.
 
-    tmux/screen remains the primary defence; this is the backstop."""
+    tmux/screen remains the primary defence and the run plan says so; this is the backstop."""
     prev = {s: signal.getsignal(s) for s in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)}
     try:
         # ⛔ SIGINT IS IN THIS LOOP DELIBERATELY. Leaving it to asyncio's own handler let the sweep
@@ -264,7 +264,7 @@ def test_SIGHUP_also_unwinds__an_ssh_drop_is_the_likeliest_strand():
 
 
 def test_the_flatten_is_NOT_gated_on_a_clean_exit():
-    """⛔ THE BRANCH THAT FIRED WAS THE BRANCH THAT LEFT INVENTORY. The teardown used to gate
+    """⛔ B3 — THE BRANCH THAT FIRED WAS THE BRANCH THAT LEFT INVENTORY. The teardown used to gate
     the passive flatten on `not halted`, reasoning that a loss-cap halt means the market moved
     against us and is the worst moment to place orders. That inverts the risk: the process is
     EXITING, so the loss cap dies with it — declining to flatten does not avoid the adverse move, it
@@ -307,19 +307,21 @@ def test_own_size_at_a_price_matches_with_the_same_tolerance_queue_ahead_uses():
     direction of not subtracting — inflating `ahead` and, downstream, the adverse verdict.
 
     Pinned at the helper because the live path currently cannot produce a divergence (`_tick`
-    string-normalises and `feed._derive` does the complement in exact Decimal before the float
-    boundary), so this is a defensive guard whose contract only a direct test can hold."""
-    own = {("buy", 0.40): 1.0, ("sell", 0.45): 2.0}
-    assert mm._own_at(own, "buy", 0.40) == 1.0
-    assert mm._own_at(own, "buy", 0.40 + 1e-12) == 1.0, "a representation wobble must still match"
-    assert mm._own_at(own, "buy", 0.45) == 0.0, "a different price is not ours"
-    assert mm._own_at(own, "sell", 0.40) == 0.0, "the other side's resting size is not ours"
-    assert mm._own_at({}, "buy", 0.40) == 0.0
+    string-normalises, `feed._derive` does the complement in exact Decimal, and since 2026-08-13
+    both sides of the comparison are exact Decimals end to end), so this is a defensive guard whose
+    contract only a direct test can hold."""
+    from decimal import Decimal as D
+    own = {("buy", D("0.40")): D(1), ("sell", D("0.45")): D(2)}
+    assert mm._own_at(own, "buy", D("0.4000")) == 1, "a differing SCALE is the same price"
+    assert mm._own_at(own, "buy", D("0.40") + D("1e-12")) == 1, "a wobble must still match"
+    assert mm._own_at(own, "buy", D("0.45")) == 0, "a different price is not ours"
+    assert mm._own_at(own, "sell", D("0.40")) == 0, "the other side's resting size is not ours"
+    assert mm._own_at({}, "buy", D("0.40")) == 0
 
 
 def test_the_reported_fill_count_EXCLUDES_flatten_fills():
     """⛔ THE SOURCE ASSERTION THIS REPLACES WAS GREEN ON THE ACTUAL DEFECT. It counted occurrences of
-    `len(seen_fills) - len(sess.flatten_fill_ids)` in `main()`'s AST and required 2. Review showed
+    `len(seen_fills) - len(sess.flatten_fill_ids)` in `main()`'s AST and required 2. mm-review showed
     a mutant walk straight through it — keep a decoy `_dead = len(seen_fills) - len(sess.flatten_
     fill_ids)` beside a `print` of the INFLATED number and the count still reads 2. It was also RED on
     a correct refactor (hoisting the subexpression into a local). A source assertion tests how the
@@ -337,7 +339,7 @@ def test_the_reported_fill_count_EXCLUDES_flatten_fills():
     Why it matters: `seen_fills` doubles as the dedup set and the advertised count, so the teardown
     flatten raised the numerator while `stats['placed']` (quotes only) held the denominator. The run
     plan compares this count against a FIFO model's prediction — an inflated count argues the model
-    UNDER-predicts, the reading that would justify committing more capital."""
+    UNDER-predicts, the reading that would justify a larger next rung."""
     assert mm.fill_counts({"a", "b", "c"}, {"c"}) == (2, 1)
     assert mm.fill_counts({"a", "b"}, set()) == (2, 0), "no flatten ⇒ every seen fill is maker edge"
     assert mm.fill_counts({"a"}, {"a"}) == (0, 1), "a run whose ONLY fill was the forced exit"

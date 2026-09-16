@@ -1,9 +1,14 @@
 """
-bot/core/safety.py
-──────────────────
+bot/safety.py
+─────────────
 Stateless safety checks for the trading loop:
 
-  is_paused()                — kill-switch file present?
+  is_paused(lane=None)       — kill-switch file present AND covering this lane? The check is
+                               CONTENT-AWARE since 2026-08-31: `pause.json` may carry
+                               `{"lanes": ["probe"]}` to halt only the named Poly maker lanes.
+                               Every other content — empty (the documented `touch`), malformed,
+                               or an empty list — is a GLOBAL pause, and a caller that passes no
+                               `lane` (arb bot, Kalshi maker) always halts on any file.
   is_daily_loss_cap_hit()    — has today's net P&L breached DAILY_LOSS_LIMIT?
   daily_realized_loss()      — today's REALIZED losses from execution_pnl.csv
 
@@ -15,18 +20,18 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
+import time
 from datetime import datetime, timezone
 
-from decimal import Decimal, InvalidOperation
+from decimal import InvalidOperation
 
 from bot.core import config
-from bot.core.money import parse_wire
+from bot.core.money import ZERO as _ZERO, parse_wire
 from bot.core.logger import get_logger
 
 log = get_logger(__name__)
-
-_ZERO = Decimal(0)
 
 
 def _nonfinite_loss(where: str) -> float:
@@ -38,7 +43,7 @@ def _nonfinite_loss(where: str) -> float:
         That was a direction regression; this preserves the halt.
       • NaN (old float path): `nan > budget` is False, so a single NaN row SILENTLY DISABLED the cap
         entirely. Under Decimal it is worse still — `max(_ZERO, Decimal("NaN"))` RAISES
-        InvalidOperation, which would escape out of the caller's periodic halt check.
+        InvalidOperation, which would escape through runner._trading_halted's 5s check.
     Either way the value is unusable, and the only safe reading of an unusable loss figure is
     "assume the worst". Logged loudly: this is the sole input to both caps, so a corrupted row must
     never pass unnoticed."""
@@ -66,10 +71,10 @@ def daily_realized_loss(day: str | None = None) -> float:
     always >= 0 and `pnl < -limit` was unreachable for ANY limit > 0, in any market condition. Not a
     mis-measured cap: a cap with no trigger.
 
-    NOT redundant with cumulative_realized_loss: that is a LIFETIME ratchet ("stop after X of losses
-    ever"); this is a rate limiter ("stop after X today"). Only this catches a day of many unwinds
-    early — the shape where the flatten costs dwarf what the winners brought in. Without the daily
-    window, a run can bleed a modest amount every day for weeks and never trip the lifetime ratchet.
+    NOT redundant with cumulative_realized_loss: that is a LIFETIME ratchet ("stop after $X of
+    losses ever"); this is a rate limiter ("stop after $X today"). Only this catches a day of many
+    unwinds early — the Σ flatten 70.60 vs Σ won 4.50 shape. Under a <n> lifetime budget, eight <n>
+    loss-days bleed without tripping the ratchet.
     """
     target = day or datetime.now(timezone.utc).date().isoformat()
     # Decimal accumulation (migration Phase 3b-lite): amounts are decimal STRINGS in the CSV, so
@@ -173,16 +178,138 @@ def is_exec_cost_cap_hit() -> bool:
     return False
 
 
-def is_paused() -> bool:
-    """True (and log a warning) if the kill-switch file exists.
+#: Cap on the kill-switch file's read. It is a hand-written control file of a few dozen bytes;
+#: anything larger is already ambiguous and gets the global pause. Unbounded, this read runs once
+#: per quote cycle against an operator-writable path on a 1.9 GB box — a stray multi-GB file there
+#: would be an OOM path into the live maker.
+_PAUSE_READ_MAX_BYTES = 64 * 1024
+
+
+def _pause_scope(path: str) -> list[str] | None:
+    """The lanes an (already-existing) kill-switch file narrows to, or `None` for a GLOBAL pause.
+
+    ⛔ FAIL-CLOSED IS THE WHOLE POINT: **ambiguity must always halt MORE, never less.**
+    The file's ONLY narrowing form is a well-formed `{"lanes": ["<name>", ...]}` with a
+    NON-EMPTY list of strings; that, and only that, returns a scope. Every other reading is
+    `None` = GLOBAL — an empty file (the operator's documented `touch pause.json`), an
+    unreadable or non-UTF-8 file, an oversized file, unparseable JSON, a non-object document,
+    a missing `lanes` key, a `lanes` that is not a list, an EMPTY list, or a list holding a
+    non-string. An operator who reaches for the kill switch and gets a partial halt because
+    their JSON had a typo is the failure this ordering refuses to allow.
+
+    ⚠️ The read's `except` covers `ValueError` as well as `OSError`: `f.read()` on non-UTF-8
+    bytes raises `UnicodeDecodeError`, a ValueError subclass, and letting it escape would turn
+    the kill-switch check — the first statement of the quote cycle — into an anonymous crash
+    into teardown with no `halt_reason`. A corrupt pause file must pause, not explode.
+
+    Read fresh on every call — this is polled once per quote cycle (seconds), and a stat/size
+    cache would trade correctness for an unmeasurable saving on a file that is normally absent.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read(_PAUSE_READ_MAX_BYTES + 1).strip()
+    except (OSError, ValueError):
+        return None
+    if not raw or len(raw) > _PAUSE_READ_MAX_BYTES:
+        return None
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    lanes = doc.get("lanes")
+    if not isinstance(lanes, list) or not lanes:
+        return None
+    if not all(isinstance(name, str) for name in lanes):
+        return None
+    return list(lanes)
+
+
+def pause_file_scope(path: str) -> list[str] | None:
+    """Public alias of `_pause_scope` for callers that gate on the file WITHOUT being the loop
+    that halts on it (`scripts/poly_prelaunch.py`'s kill-switch gate). Same fail-closed rules;
+    `None` means "global / ambiguous — treat as covering everyone"."""
+    return _pause_scope(path)
+
+
+#: How often the scoped-MISS line is allowed to be a WARNING for one unchanged (file, scope, lane).
+_SCOPED_MISS_WARN_EVERY_S = 600.0
+#: (path, mtime, scope, lane) → epoch of the last WARNING-level emission.
+_scoped_miss_last_warn: dict[tuple, float] = {}
+
+
+def _scoped_miss_level(path: str, scope: list[str], lane: str) -> int:
+    """WARNING on the first sighting of a (file, scope, lane) and every 10 min after; INFO between.
+
+    ⛔ NOT COSMETIC — this is a Discord rate-limit guard [review r3, CONCERN A].
+    `_DiscordWebhookHandler` posts every WARNING-and-above with only a 30 s dedup window
+    [bot/core/logger.py:_DiscordWebhookHandler._DEDUP_WINDOW], and the scoped-miss line is emitted
+    once per quote cycle in this feature's INTENDED STEADY STATE (a scoped pause up while the other
+    lane runs all evening). At `--requote-s 10` that is ~960 posts an evening onto the same webhook
+    that carries strand alerts: alert fatigue plus a real 429 risk on the channel we need working
+    during an incident. The log TAIL stays loud — every check still emits a line — but only the
+    throttled subset reaches WARNING and therefore Discord.
+
+    The key includes the file's mtime AND the parsed scope, so an operator EDITING the pause file
+    (fixing the lane name, adding a lane) re-fires immediately rather than waiting out the window —
+    the edit is exactly the moment they are watching for a response.
+    """
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        mtime = -1.0
+    key = (path, mtime, tuple(scope), lane)
+    now = time.time()
+    last = _scoped_miss_last_warn.get(key)
+    if last is not None and now - last < _SCOPED_MISS_WARN_EVERY_S:
+        return logging.INFO
+    if len(_scoped_miss_last_warn) > 100:
+        # Unbounded growth is impossible in practice (one key per edit), but this dict outlives
+        # every run in a long-lived process; same clamp shape as the Discord handler's own.
+        _scoped_miss_last_warn.clear()
+    _scoped_miss_last_warn[key] = now
+    return logging.WARNING
+
+
+def is_paused(lane: str | None = None) -> bool:
+    """True (and log a warning) if the kill-switch file exists and covers `lane`.
 
     Operator creates `pause.json` (or whatever KILL_SWITCH_FILE points to) to
     halt new trade execution without restarting. Remove the file to resume.
+
+    `lane` is the Poly maker's `--lane` (main / probe / wsprobe). Passing it opts into the
+    lane-scoped form `{"lanes": ["probe"]}`, which halts ONLY the listed lanes so one lane's
+    teardown cannot tear down a concurrent run in another lane. See `_pause_scope` for the
+    fail-closed rules.
+
+    `lane=None` — the DEFAULT, and what every non-Poly-maker caller passes (arb bot, Kalshi
+    maker, probe scripts) — means "I am not in the lane namespace": ANY pause file, scoped or
+    not, halts me. Those callers have no lane to match against, so the only fail-closed reading
+    of a scoped file is that it applies to them too.
     """
     path = config.KILL_SWITCH_FILE
-    if path and os.path.exists(path):
-        log.warning(
-            f"⏸️  Kill switch active — '{path}' exists. Remove it to resume trading."
-        )
-        return True
-    return False
+    if not path or not os.path.exists(path):
+        return False
+    if lane is not None:
+        scope = _pause_scope(path)
+        if scope is not None and lane not in scope:
+            # ⛔ LOUD ON THE NOT-PAUSED BRANCH TOO. Returning
+            # False silently here is the fail-open an operator cannot see: they wrote
+            # `{"lanes": ["Probe"]}`, the case does not match, and a live maker keeps quoting
+            # through what they believe is a halt — with no line in the tail to say so.
+            # EVERY CHECK gets a line (the operator is watching a scrolling tail, and one line at
+            # the top of a spell that lasts hours is a line they will not be looking at) — but only
+            # a THROTTLED subset is WARNING. See `_scoped_miss_level`. [review r3, CONCERN A]
+            log.log(
+                _scoped_miss_level(path, scope, lane),
+                f"⏸️  Pause file present but scoped to {scope!r}; lane {lane!r} CONTINUES "
+                f"quoting ('{path}'). If you meant to halt this lane, add it to \"lanes\" or "
+                f"empty the file (an empty file halts EVERY lane)."
+            )
+            return False
+    scope_note = "" if lane is None else f" (lane={lane})"
+    log.warning(
+        f"⏸️  Kill switch active — '{path}' exists{scope_note}. Remove it to resume trading."
+    )
+    return True

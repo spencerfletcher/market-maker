@@ -1,7 +1,8 @@
-"""Fail-closed venue-quantity parsing, shared by every process that reads a venue quantity.
+"""Fail-closed venue-quantity parsing, shared by the reconciler and the maker supervisor.
 
-It lives on its own because a sixteen-line pure parser should never drag a trading engine in
-behind it — every consumer of this function is somewhere you do NOT want an import cycle.
+Moved here from `bot.runner.reconcile` 2026-08-13 (public-repo decoupling: the supervisor must
+not import the arb runner for a 16-line pure parser) — CODE byte-identical; the docstring's two
+self-references were re-homed. `reconcile` re-exports it, so its callers and tests are unchanged.
 """
 from __future__ import annotations
 

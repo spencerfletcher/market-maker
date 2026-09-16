@@ -12,14 +12,15 @@ keeping-up signal is: per-message inline handler time vs inter-arrival gap — w
 handler time approaches the gap under load, the loop is saturated. The independent
 event-loop-lag probe is the closest analogue to "queue depth" for an asyncio system.
 
-Design constraints:
+Design constraints (see the diagnostic request + CLAUDE.md):
   • Default OFF. When `WS_LOOP_TIMING` is false this module costs one bool check per
     message (`ws_timer.enabled`) and nothing else — no file handle, no allocation.
   • Negligible overhead when ON: perf_counter only, no per-message disk I/O (rows
     are buffered and flushed periodically / 1-in-N sampled), so the measurement does
     not slow the loop it measures.
   • Writes ONLY logs/ws_loop_timing.csv — a SEPARATE diagnostic file, hard-barred
-    from clobbering any existing log, backtest, or loss-cap file.
+    (mirroring scripts/settlement_capture.assert_safe_output) from clobbering any
+    existing log, backtest, or loss-cap file.
   • Zero behaviour change: this records what was true; it never feeds a gate, sizer,
     fire decision, staleness check, or DRY_RUN. Detection/cache logic is byte-for-byte
     identical whether timing is on or off.

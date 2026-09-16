@@ -1,17 +1,16 @@
 """
 bot/core/money.py
 ─────────────────
-Exact decimal arithmetic for money.
+Exact decimal arithmetic for money. Phase 0 of the private design notes.
 
-WHY THIS EXISTS. Float error at this system's magnitudes (prices in [0,1], small money amounts) is
-~1e-13 — orders of magnitude below the smallest meaningful unit (the centicent, 1e-4). It is therefore
+WHY THIS EXISTS. Float error at this system's magnitudes (prices in [0,1], money < <n>) is ~1e-13 —
+eight orders of magnitude below the smallest meaningful unit (the centicent, 1e-4). It is therefore
 harmless *except* when AMPLIFIED across a threshold by a `ceil`/`floor` or a compare-to-zero. Both
 production precision bugs were exactly that:
 
-  • the fee bug — `0.07*0.5*0.5*1e4 == 175.00000000000003`, so a bare ceil() charged a whole extra
-    centicent
+  • the fee bug — `0.07*0.5*0.5*1e4 == 175.00000000000003`, so a bare ceil() yielded <n> not <n>
   • the crossed-book dust — a removed level left qty ~1e-13, and `qty > 0` kept the ghost, producing
-    phantom fat edges on a majority of the candidates sampled at fire time
+    phantom fat edges (30/52 would-fires crossed at fire time)
 
 Both were patched with a hand-placed `round(x, 6)` before the amplifying op. That works, but it makes
 correctness depend on every future author *remembering* the guard — which is precisely how both bugs got
@@ -29,10 +28,14 @@ precision. The default 28 significant digits is ample for division.
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
+from typing import Sequence
 
-__all__ = ["CENT", "CENTICENT", "D", "from_float", "parse_wire", "complement", "floor_to", "ceil_to", "is_zero"]
+__all__ = ["ZERO", "ONE", "CENT", "CENTICENT", "D", "from_float", "parse_wire", "complement",
+           "floor_to", "ceil_to", "is_zero", "dec_or_none", "mean_or_none"]
 
+ZERO = Decimal(0)               # the compare-to-zero literal; NOT a threshold — see maker_state._ONE
+ONE = Decimal(1)
 CENT = Decimal("0.01")          # Poly fee grid (rounded on the ORDER TOTAL)
 CENTICENT = Decimal("0.0001")   # Kalshi fee grid; the smallest unit either venue quotes
 
@@ -84,10 +87,10 @@ def complement(price: float) -> float:
     structural, and on the wire grid (<=4 dp) it is an exact involution — `complement(complement(p))
     == p`, which does NOT hold for arbitrary floats (~31% of random doubles fail) — which matters
     because the two complements sit on opposite sides of the same trade and are compared to each other
-    (one side walks levels with `ask <= limit`, the other with `px >= 1 - limit`).
+    (`_kalshi_ask_levels`' `ask <= limit` vs `_fillable_from_book`'s `px >= 1-limit`).
 
-    Float in/out deliberately — this is a strangler-fig boundary and callers still hold floats. Lossless
-    for wire values; a computed (already-float) input can only be as exact as the float it came in as."""
+    Float in/out deliberately (D7 strangler-fig): callers still hold floats. Lossless for wire values;
+    see the boundary note in the private design notes for computed inputs."""
     return float(D(1) - from_float(price))
 
 
@@ -114,3 +117,18 @@ def is_zero(value: Decimal, step: Decimal = CENTICENT) -> bool:
     selected a stale ghost as best-bid, producing phantom crossed books. Comparing at the venue's
     actual resolution makes that class of bug unrepresentable."""
     return abs(value) < step
+
+
+def dec_or_none(value: object) -> Decimal | None:
+    """Venue STRING (or blank/None) → Decimal, None when blank or unparseable."""
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def mean_or_none(values: Sequence[Decimal]) -> Decimal | None:
+    """Arithmetic mean, or None. ⛔ An empty set is not a zero mean."""
+    return None if not values else sum(values, ZERO) / Decimal(len(values))

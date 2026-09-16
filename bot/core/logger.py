@@ -19,10 +19,12 @@ import sys
 import time
 from datetime import datetime
 
-# ⛔ discord_webhook is imported INSIDE emit(), not here: the import chain (requests +
-# urllib3 + charset tables) costs tens of MB of resident heap PER PROCESS, and every
-# collector paid it at startup whether it ever warned or not — on a small-memory host that
-# is the whole fleet paying for a handler most processes never fire.
+# ⛔ The webhook poster is imported INSIDE emit(), not here [RAM audit 2026-08-12 D2]: the
+# import chain (requests + urllib3 + charset tables) costs ~34 MB of resident heap PER
+# PROCESS, and six collectors paid it at startup whether they ever warned or not — on a
+# 1.9 GB box that was ~2 dozen MB × the fleet for a handler most processes never fire.
+# (The poster moved from `discord_webhook` into bot.core.alerts on 2026-09-04; the chain
+# it pulls is the same `requests` one, so the deferral still pays.)
 # The import now lands on the FIRST WARNING with a webhook configured (sys.modules caches
 # every later one), inside emit's existing swallow-everything try.
 
@@ -65,8 +67,8 @@ class _DiscordWebhookHandler(logging.Handler):
     ⚠️ ONE log.warning() USED TO BE ABLE TO FREEZE THE WHOLE BOT. `emit` runs synchronously on
     whatever thread logged — which here is the event loop — and posted with `DiscordWebhook`'s
     default timeout of None, which `requests` reads as *wait forever*: no connect timeout, no read
-    timeout. Proven against a black-hole socket (accepts TCP, never replies): a task ticking many
-    times a second emitted one warning and never ticked again, still blocked when it was killed.
+    timeout. Proven 2026-07-16 against a black-hole socket (accepts TCP, never replies): a task
+    ticking 19x/0.2s emitted one warning and never ticked again, still blocked when killed at 25s.
     The failure is self-amplifying — the feed-freeze *alarm* freezes both feeds, and the
     `websockets` library then cannot answer server pings from the same loop, so the sockets drop
     and the reconnect code can never run. Nothing recovers it: the unit has `Restart=always` but no
@@ -98,8 +100,8 @@ class _DiscordWebhookHandler(logging.Handler):
             color = "ff0000" if record.levelno >= logging.ERROR else "ffaa00"
             # Imported here, not at module scope: bot.core.alerts imports config, and a top-level
             # import would close a cycle through this module's own logger.
-            from bot.core.alerts import _DISCORD_TIMEOUT_S, _dispatch
-            from discord_webhook import DiscordWebhook, DiscordEmbed
+            from bot.core.alerts import (_DISCORD_TIMEOUT_S, DiscordEmbed, DiscordWebhook,
+                                         _dispatch)
             webhook = DiscordWebhook(url=config.DISCORD_WEBHOOK_URL,
                                      timeout=_DISCORD_TIMEOUT_S)
             embed = DiscordEmbed(
@@ -162,7 +164,12 @@ def get_file_logger(name: str, filename: str) -> logging.Logger:
     log = logging.getLogger(name)
     if not log.handlers:
         os.makedirs("logs", exist_ok=True)
-        handler = logging.FileHandler(os.path.join("logs", filename), encoding="utf-8")
+        # delay=True: the file is opened on the FIRST RECORD, not at import. These loggers are
+        # module-level singletons (`bot/runner/common.py`), so without it merely importing the
+        # runner creates three files in `logs/` — the LIVE tape tree on the box, and a tree the
+        # test suite must not touch at all.
+        handler = logging.FileHandler(os.path.join("logs", filename), encoding="utf-8",
+                                      delay=True)
         handler.setFormatter(
             _StripAnsiFormatter("%(asctime)s %(levelname)-8s — %(message)s")
         )

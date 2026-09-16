@@ -12,12 +12,12 @@ Copy-pasting it a third time is how the two drift apart and stop being comparabl
 
 ⚠️ TWO INVERSION TRAPS, both of which have already cost real measurements here:
 
-1. **`taker_book_side` — UNVERIFIED, and the codebase contradicts itself about it.** One place calls
-   it richer than the Poly tape — an EXPLICIT aggressor field, no inference needed — while the code
-   that actually shipped says the field follows a YES/NO complementary-matching convention that
-   inverts if read naively, and uses price-vs-mid instead. Neither claim was ever measured. Do not
-   treat the inversion as established; it is repeated here only because the working code chose that
-   path.
+1. **`taker_book_side` — the repo CONTRADICTS ITSELF and neither claim is sourced. [UNVERIFIED]**
+   `kalshi_markout_probe.py`'s header calls it *"richer than Poly — the EXPLICIT `taker_book_side`,
+   so the aggressor is known directly"*, while its own code says the field *"uses a YES/NO
+   complementary-matching convention that inverts naively"* and uses price-vs-mid instead. There is
+   no entry in `the private design notes` supporting either. Do not treat the inversion claim as
+   established — it is repeated here only because the working code chose that path.
    `aggressor_from_mid()` is a DERIVATION from a caller-supplied book snapshot; `taker_book_side` is
    a VENUE FIELD, and the standing rule is to read the field. Right move when this is next touched:
    log BOTH and measure the disagreement rate against known own-fills (`raw` is on every event, so
@@ -27,9 +27,9 @@ Copy-pasting it a third time is how the two drift apart and stop being comparabl
    WS has applied the resulting delta, the inference inverts.
 
 2. **`get_depth(side)` is the OPPOSITE ladder.** It means "size available to BUY that side", so
-   `get_depth(t, "no")` is the YES-BID depth and `get_depth(t, "yes")` is the YES-ASK depth — see
-   `feed.get_depth`. Mapping them the obvious way inverts OBI. It did, and produced a false null in
-   the order-book-imbalance work before anyone noticed.
+   `get_depth(t, "no")` is the YES-BID depth and `get_depth(t, "yes")` is the YES-ASK depth
+   [VERIFIED feed.py:314]. Mapping them the obvious way inverts OBI — it did, and produced a false
+   null in the OBI work before anyone noticed.
 
 READ-ONLY. This places nothing and holds no position; it only listens.
 """
@@ -72,7 +72,7 @@ def _epoch_s(v) -> float | None:
 
 def _dec(v) -> Decimal | None:
     """Venue string → exact Decimal. Parsed from the string form: `Decimal(0.47)` would launder a
-    float's representation error into the Decimal and defeat the point."""
+    float's representation error into the Decimal and defeat the point (CLAUDE.md § Code style)."""
     if v is None:
         return None
     try:
@@ -114,17 +114,18 @@ class KalshiTradeFeed:
         # queue attribution does) would then mark every order every second and return a run that is
         # 100% unreadable: a measurement dying quietly, which is the failure this file exists to
         # prevent. This counter is the narrow one — frames that WERE trades and could not be used,
-        # i.e. actual lost prints.
+        # i.e. actual lost prints. [mm-review 2026-07-24 C-f]
         self.n_bad_trades = 0
         self.last_error: str | None = None
         # Errors are COUNTED, never swallowed silently. A tap that raises on every message and says
         # nothing turns a total failure into a clean-looking "no trades" — the exact way a shadow
         # probe once printed an all-zero table with no error anywhere.
         self.errors: dict[str, int] = {}
-        # ⚠️ THE ACK TYPES BELOW ARE A GUESS: `subscribed`/`ok`/`error` were never captured from
-        # Kalshi, only assumed. So keep the first few frames we do NOT recognise — verbatim, bounded
-        # — and the next real run turns the guess into a captured envelope. If `subscribed` stays
-        # False while trades flow, the real ack type is sitting in here.
+        # ⚠️ THE ACK TYPES BELOW ARE A GUESS (the private design notes M4): `subscribed`/`ok`/`error` were never
+        # captured from Kalshi, only assumed. So keep the first few frames we do NOT recognise —
+        # verbatim, bounded — and the next real run turns the guess into a captured envelope for the
+        # venue-reference skill, the way `market_positions` was settled. If `subscribed` stays False
+        # while trades flow, the real ack type is sitting in here.
         self.unknown_frames: list[str] = []
         # Prints the tape DELIVERED and the consumer then threw away — a raising `on_trade`. Kept
         # separate from `errors`, which also accrues reconnect exceptions and venue `error` frames:
@@ -143,10 +144,10 @@ class KalshiTradeFeed:
                 # ping_interval + ping_timeout, and until it does `n_reconnects` does not move,
                 # `subscribed` stays True, and every order resting in that window accrues traded=0
                 # behind a clean flag. At 20/20 that blind window is ~40s, which spans 1-6 whole
-                # order lifetimes at --requote-s 6-30 — and because Kalshi's tape is SPARSE,
-                # silence is genuinely indistinguishable from a quiet market, so nothing downstream
-                # can recover it. 5/5 cuts the blind window to ~10s. Pings are a few bytes; this is
-                # not a meaningful cost.
+                # order lifetimes at --requote-s 6-30 — and because Kalshi's tape is sparse
+                # (~1 print/40s across 60 tickers) silence is genuinely indistinguishable from a
+                # quiet market, so nothing downstream can recover it. 5/5 cuts it to ~10s. Pings are
+                # a few bytes; this is not a meaningful cost. [mm-review 2026-07-24 C-e]
                 async with websockets.connect(
                     self._client.ws_url, additional_headers=self._client.ws_headers(),
                     ping_interval=5, ping_timeout=5, max_size=None,
@@ -168,7 +169,7 @@ class KalshiTradeFeed:
                         await self._handle(await ws.recv())
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:                       # noqa: BLE001 — must survive to reconnect
+            except Exception as exc:                       # must survive to reconnect
                 self._note(exc)
                 self.n_reconnects += 1
                 log.warning(f"kalshi trade feed: reconnecting after {exc!r}")
@@ -231,7 +232,7 @@ class KalshiTradeFeed:
             if inspect.isawaitable(r):        # not iscoroutine: a returned Task/Future would be
                 await r                        # dropped rather than awaited
 
-        except Exception as exc:                           # noqa: BLE001 — a bad callback must not
+        except Exception as exc:                           # a bad callback must not
             self._note(exc)                                # kill the tape for everyone else
             self.n_callback_errors += 1                    # ...but the print IS lost — say so
 

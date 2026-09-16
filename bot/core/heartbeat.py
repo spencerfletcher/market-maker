@@ -3,19 +3,19 @@ bot/core/heartbeat.py
 ─────────────────────
 Liveness that survives the process — a heartbeat file plus the deadman that reads it.
 
-WHY IT IS SHAPED THIS WAY. The death that actually happens in practice is SIGKILL — memory
-pressure, not a polite signal — and it is the one death that always strands live orders. SIGKILL
-runs no handler, so a dying process CANNOT report its own death. The only construction that works
-is the inverse: the living process continuously asserts that it is alive, and a SEPARATE observer
-notices when the assertions stop.
+WHY IT IS SHAPED THIS WAY. The death this box actually inflicts is SIGKILL (six OOM kills on
+record; `bot/kalshi/maker.py` names SIGKILL as the one death that always strands live orders).
+SIGKILL runs no handler, so a dying process CANNOT report its own death. The only construction
+that works is the inverse: the living process continuously asserts that it is alive, and a
+SEPARATE observer notices when the assertions stop.
 
 That observer needs nothing but the filesystem. Each beat is a small durable JSON file under
 `logs/heartbeat/<name>.json` carrying the operator's three questions — how many markets are
 quoted, what inventory is on, what the P&L is — plus the fields the deadman needs. Critically the
 file carries its OWN staleness budget (`stale_after_s`): a watchdog reading it does not have to be
 configured with the process's cadence, so the budget cannot drift out of sync with the writer.
-A separate watchdog script is that observer, and it exits non-zero, so a `systemd` timer or cron
-entry can be the thing that actually watches.
+`scripts/opswatch.py` is that observer, and it exits non-zero, so `systemd`/cron can be the thing
+that actually watches — see <deploy unit> .
 
 FIVE STATES, NOT TWO. `ok` / `stale` / `missing` / `corrupt` / `exited`.
   · `missing` and `corrupt` are NOT `ok`: absence of evidence of life is not evidence of health
@@ -44,6 +44,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -52,6 +53,16 @@ from bot.core import durable
 log = logging.getLogger(__name__)
 
 DEFAULT_DIR = durable.repo_path("logs", "heartbeat")
+
+#: ⛔ WORLD-READABLE ON PURPOSE — a heartbeat is a liveness signal whose ONLY consumer is another
+#: process, usually under ANOTHER USER. `scripts/opswatch.py` runs as `ubuntu`; `<unit>`
+#: runs as ROOT (a deliberate drop-in, it needs timer-stamp grants). The durable writer stages
+#: through `tempfile.mkstemp`, which creates 0600 regardless of umask BY DESIGN — so a `UMask=`
+#: drop-in cannot fix this, and did not. Incident 2026-08-28: root wrote
+#: `logs/heartbeat/pressure_shed.json` at 0600, opswatch got Errno 13 reading it, and every sweep
+#: paged "liveness UNKNOWN" — the rail reporting a broken rail rather than a broken process. Every
+#: heartbeat write site must use this mode; a beat nobody can read is a beat that did not happen.
+HEARTBEAT_MODE = 0o644
 
 # How many missed beats before the deadman trips. 3 tolerates an ordinary slow cycle — the maker's
 # `_positions` alone retries a 429 at 1.5/3/6s — without tolerating a death. The floor keeps a
@@ -66,6 +77,44 @@ def _stale_after(interval_s: float) -> float:
 
 def heartbeat_path(name: str, directory: str | None = None) -> str:
     return os.path.join(directory or DEFAULT_DIR, f"{name}.json")
+
+
+#: A lane name may only contain these. ⛔ NOT cosmetic: the lane is concatenated into a FILENAME,
+#: so `../../x` or `a/b` writes the beat outside `HEARTBEAT_DIR` — where `heartbeat.scan()` (a
+#: flat glob of that one directory) cannot see it. The process would be INVISIBLE to the deadman
+#: while looking perfectly configured, which is this rail's worst available failure.
+_LANE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def lane_name(base: str, lane: str | None) -> str:
+    """The heartbeat NAME for one lane of a multi-lane program. ONE RULE, EVERY CALLER.
+
+    ⛔ I-OPS-1 [2026-08-20]. The name used to be stamped by MODE only, so two concurrent real
+    maker lanes wrote ONE file, last writer wins. Both directions bit: opswatch paged the
+    non-writing lane's LIVE quotes as strays, and — worse — a SIGKILL of one lane was MASKED by
+    the sibling's beats, so the deadman covered one of two processes holding real orders. The
+    reporter (`scripts/poly_live_report.py`) reads the same file and had the same split: it
+    would describe a DEAD lane as 📈 alive off the other lane's beat.
+
+    The default lane keeps the BARE name — units, runbooks and tooling all name
+    `poly_live_mm.json`, and renaming the common case to fix the rare one would break far more
+    than it fixed.
+
+    Raises ValueError on a lane that could escape the heartbeat directory (see `_LANE_RE`).
+    """
+    # Deferred so this low-level liveness module keeps no import-time dependency on the ledger;
+    # `DEFAULT_LANE` lives there and must not be restated here as a second copy of "main".
+    from bot.core.maker_state import DEFAULT_LANE
+    if lane is None or str(lane) == DEFAULT_LANE:
+        return base
+    lane = str(lane)
+    if not _LANE_RE.match(lane):
+        raise ValueError(
+            f"lane {lane!r} is not a safe filename component (allowed: {_LANE_RE.pattern}) — a "
+            f"lane is concatenated into the heartbeat filename, and one containing a path "
+            f"separator would write the beat outside the watched directory, making the process "
+            f"INVISIBLE to the deadman")
+    return f"{base}.lane-{lane}"
 
 
 def _pid_running(pid: int | None) -> bool | None:
@@ -151,10 +200,22 @@ class Heartbeat:
 
     def _write(self, payload: dict) -> None:
         try:
-            durable.write_json_durable(self.path, payload)
+            durable.write_json_durable(self.path, payload, mode=HEARTBEAT_MODE)
         except Exception as exc:              # instrumentation must never stop trading
             log.error(f"heartbeat: could not write {self.path} ({exc!r}) — this process is now "
                       f"INVISIBLE to the deadman")
+            return
+        # A ROOT writer (`<unit>`, `User=root` drop-in) publishes a root:root file
+        # through mkstemp+replace, which the directory's owner (`ubuntu`) can then neither
+        # rewrite nor append. Hand the ONE published file to the directory's owner — never the
+        # directory, never recursive. Best-effort: a failed chown is logged, not raised.
+        try:
+            if os.geteuid() == 0:
+                st = os.stat(os.path.dirname(self.path))
+                if (st.st_uid, st.st_gid) != (0, 0):
+                    os.chown(self.path, st.st_uid, st.st_gid)
+        except Exception as exc:
+            log.warning(f"heartbeat: could not chown {self.path} to the directory owner ({exc!r})")
 
 
 @dataclass(frozen=True)
@@ -178,15 +239,15 @@ class Deadman:
     def ok(self) -> bool:
         """`exited` is ok ONLY for a clean exit — a halt is an exit an operator must SEE.
 
-        ⛔ …and "seen" needs a way to be recorded, or the alarm is permanent. Without an
-        acknowledgement path, a halt the operator has already dealt with keeps being reported as
-        the process's ONLY problem on every watchdog run, for as long as the record sits there.
-        A rail that cannot be answered trains the operator to ignore it, and an ignored rail is
-        worse than no rail — it is the only thing standing between a real halt and silence, and
-        by the time the next halt lands it has been crying wolf for hours.
+        ⛔ …and "seen" needs a way to be recorded, or the alarm is permanent. Before 2026-08-08
+        there was none: the Poly maker halted on memory at 02:29Z, the operator saw it, dealt
+        with it, and opswatch went on reporting the same halt every 5 minutes for 20 hours as
+        its ONLY problem. A rail that cannot be answered trains the operator to ignore it, and
+        an ignored rail is worse than no rail — it was the only thing standing between a real
+        halt and silence, and it had been crying wolf all day by the time the next one landed.
 
         Acknowledgement is deliberately NOT deletion: the record stays on disk with the halt
-        reason intact, so the evidence survives and the watchdog still PRINTS the row. It stops
+        reason intact, so the evidence survives and `opswatch` still PRINTS the row. It stops
         being a *problem*, not a fact.
         """
         if self.state == "ok":
@@ -305,7 +366,7 @@ def acknowledge(name: str, *, by: str, directory: str | None = None,
     if not status:
         raise SystemExit(
             f"REFUSING: {name} recorded no exit_status — this is an unclean death, not a halt. "
-            f"Live orders may be resting. Ask the venue (scripts.maker_recover) before "
+            f"Live orders may be resting. Ask the venue (see the operator runbook) before "
             f"acknowledging anything.")
     # ⛔ AN ALLOWLIST, NOT A TRUTHINESS CHECK. The first cut
     # guarded on `exit_status` being non-empty, reasoning "no status means the venue was never
@@ -323,22 +384,33 @@ def acknowledge(name: str, *, by: str, directory: str | None = None,
             f"`record_open:*` means the teardown could not READ the venue, and "
             f"`halted:prior_run_unresolved` means an earlier crash is still open — both need "
             f"the venue opened, not the alarm answered. Check resting orders "
-            f"(scripts.maker_recover, or scripts.poly_us_orders for Poly), then acknowledge "
+            f"(see the operator runbook), then acknowledge "
             f"whatever remains.")
     raw["acknowledged_ts"] = time.time() if now is None else float(now)
     raw["acknowledged_by"] = by
     tmp = f"{path}.tmp"
     with open(tmp, "w") as fh:
         json.dump(raw, fh, indent=2)
+    # Acknowledging must not make the heartbeat unreadable to the watcher that raised the alarm:
+    # `open()` applies the umask, so under a strict one this republishes the file at 0600 and the
+    # next opswatch sweep reports "liveness UNKNOWN" instead of the halt it just acknowledged.
+    # Set the mode on the TMP, before the rename, so the published name never has the wrong one.
+    os.chmod(tmp, HEARTBEAT_MODE)
     os.replace(tmp, path)
     return path
+
+
+#: The in-play sampler's ramp PHASE marker lives in the heartbeat directory (poly_night reads it
+#: there) but is not a beat: it is stamped once at ramp start and once at ramp end.
+RAMP_MARKER_NAME = "inplay_sampler_ramp.json"
 
 
 def scan(directory: str | None = None, *, now: float | None = None) -> list[Deadman]:
     """Every heartbeat in `directory`. An empty/absent directory yields [] — which a caller must
     read as "nothing is being watched", not as "everything is fine"."""
     d = directory or DEFAULT_DIR
-    return [deadman_check(p, now=now) for p in sorted(glob.glob(os.path.join(d, "*.json")))]
+    return [deadman_check(p, now=now) for p in sorted(glob.glob(os.path.join(d, "*.json")))
+            if os.path.basename(p) != RAMP_MARKER_NAME]
 
 
 def problems(directory: str | None = None, *, now: float | None = None) -> list[str]:

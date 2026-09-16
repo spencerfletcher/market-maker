@@ -3,10 +3,10 @@ bot/core/memguard.py
 ────────────────────
 RSS / system-memory headroom guard for the long-running money-path processes.
 
-WHY. A small-memory host, a long-running quote loop, and a repeated history of OOM kills — and
-SIGKILL is the one death that ALWAYS strands live orders. The OOM killer sends SIGKILL: no handler
-runs, no cancel-all, no flatten, no durable write. Approaching-the-ceiling episodes had been caught
-by hand; this exists so the next one is caught by the process instead of the kernel.
+WHY. A small box, repeated recorded OOM kills, and `bot/kalshi/maker.py` naming SIGKILL as the
+one death that ALWAYS strands live orders. The OOM killer sends SIGKILL — no handler runs, no
+cancel-all, no flatten, no durable write. Hazards were caught by hand before this existed; it
+exists so the next one is caught by the process instead of the kernel.
 
 The job is narrow: notice the approach and halt through the process's OWN teardown while there is
 still enough memory to run it. A clean halt with orders cancelled beats a SIGKILL with orders
@@ -16,41 +16,43 @@ TWO SIGNALS, DELIBERATELY:
   · our own RSS — the leak we can attribute; and
   · system headroom = `MemAvailable` + `SwapFree` — our model of kill distance (see the
     verification note below). The OOM killer does not care whose fault the pressure is; it picks
-    the largest RSS, which is typically us. So low system-wide headroom halts us even when our
+    the largest RSS, which on this box is us. So low system-wide headroom halts us even when our
     own footprint is small.
 
 SWAP COUNTS TOWARD THE FLOOR. Under normal reclaim the kernel pushes anonymous pages to swap
-before OOM-killing, so RAM-avail alone being low usually just means paging. A RAM-only floor
-therefore false-halts a healthy process while gigabytes of swap sit free — and a false halt costs
-a whole run's tape. But a combined-only floor is worse in the other direction: it would let the
-halt fire with almost no RAM resident and the remaining headroom entirely in swap, exactly where
-the teardown itself would thrash. So the halt is a DISJUNCTION:
+before OOM-killing, so RAM-avail alone low usually just means paging. A RAM-only floor produced
+a false halt with plenty of swap free, triggered by the hourly producer stack, and was replaced
+rather than the RAM upgraded [operator decision]. The halt is therefore a DISJUNCTION [mm-review
+BLOCKING-1 — a combined-only floor would let the halt fire at ~0 RAM with only swap left, where
+the teardown itself would thrash]:
   · COMBINED headroom (avail + swap free) <= MIN_AVAIL — the OOM-distance floor; and
-  · RAM avail alone <= HARD_RAM_FLOOR — a residency guarantee for the teardown (cancel-all →
-    flatten → sweep is venue HTTP across possibly hundreds of books; it must not run entirely
-    from a swapfile).
+  · RAM avail alone <= HARD_RAM_FLOOR — a residency guarantee for the teardown
+    (cancel-all → flatten → sweep is venue HTTP across possibly hundreds of books; it must not
+    run entirely from a swapfile). The floor clears every recorded false halt.
 RAM-avail low but above the hard floor is a WARN ("paging territory" — quote-cycle latency),
 and swap unreadable falls back to RAM-only headroom — conservative, halts earlier.
-✅ VERIFIED against a full kernel-log kill history: every recorded OOM kill fired with swap
-EXHAUSTED (a few tens of kB free at the kill moment, never more) — the kernel really does drain
-swap before killing. Still a model at the margins: a fast allocator can outrun swap-out and OOM
-with swap free, and /proc/meminfo is host-wide (cgroup limits invisible) — which is what the hard
-RAM floor and the RSS ceiling backstop. ⚠️ The hard RAM floor was chosen to clear the false halts
-on record, NOT derived from a measured teardown cost — the calibrating read is peak-RSS delta
-across a full-slate teardown, and until someone takes it this number is a guess with a rationale.
-A host with NO swap configured reads SwapFree 0 (not None) and the combined floor degenerates to
-RAM-only — safe direction, but loud: check() warns when SwapTotal is 0.
+✅ VERIFIED on this box's FULL kill history [2026-08-12, /var/log/kern.log incl. all rotated
+.gz — 14 recorded OOM kills, 2026-07-16 → 2026-08-08]: ALL 14 fired with swap EXHAUSTED
+(`Free swap` 40–244 kB at the kill moment, never more; swappiness=60) — the kernel really does
+drain swap before killing here, every time it has ever killed. Still a model at the margins: a
+fast allocator can outrun swap-out and OOM with swap free, and /proc/meminfo is host-wide
+(cgroup limits invisible) — which is what the hard RAM floor and the RSS ceiling backstop. ⚠️ The 80 MB hard floor was chosen to clear the recorded false halts (104–116 MB),
+NOT derived from a measured teardown cost — the calibrating read is peak-RSS delta across a
+full-slate shadow teardown. ⚠️ The five false halts' swap-free values were never recorded (the
+old halt string had no swap term); only attempt 4's ~1.7 GB is session-observed. A box with NO
+swap configured reads SwapFree 0 (not None) and the combined floor degenerates to RAM-only at
+256 — stricter than the old 120, safe direction, but loud: check() warns when SwapTotal is 0.
 
-WHERE /tmp IS A tmpfs IT IS RAM, so anything staged there spends the very resource this guard
-protects — a scratch-file convention is a memory rule, not a tidiness one. It is REPORTED but
-never halts: the writer is usually another process, and halting a live maker over someone else's
-scratch files would be the guard causing the outage.
+/tmp IS RAM HERE (a 953 MB tmpfs against 1.9 GB total), so anything staged there spends the very
+resource this guard protects — CLAUDE.md's scratch-file rule is a memory rule, not a tidiness one.
+It is REPORTED but never halts: the writer is usually another process, and halting a live maker
+over someone else's scratch files would be the guard causing the outage.
 
-⚠️ FAIL DIRECTION IS *OPEN*, AND THAT IS THE OPPOSITE OF THE POSITION-RECONCILER'S RULE — on
-purpose. An unreadable POSITION is missing evidence about money, so it must read as danger. An
-unreadable `/proc/meminfo` is missing evidence about a PROXY and carries no information about
-memory pressure at all; treating it as danger would let a procfs hiccup stop a live maker.
-Unknown is therefore loud, surfaced by the watchdog, and non-halting.
+⚠️ FAIL DIRECTION IS *OPEN*, AND THAT IS THE OPPOSITE OF `reconcile.py`'S RULE — on purpose.
+An unreadable POSITION is missing evidence about money, so it must read as danger. An unreadable
+`/proc/meminfo` is missing evidence about a PROXY and carries no information about memory pressure
+at all; treating it as danger would let a procfs hiccup stop a live maker. Unknown is therefore
+loud, surfaced by `scripts/opswatch.py`, and non-halting.
 """
 from __future__ import annotations
 
@@ -156,8 +158,8 @@ def read_swap_free_mb() -> float | None:
 
 def read_swap_total_mb() -> float | None:
     """System `SwapTotal` in MB. Only used to make "no swap configured" LOUD: SwapFree reads 0
-    (not None) on a swapless host, silently degenerating the combined floor to a RAM-only one —
-    the safe direction, but a false-halt class if the swapfile ever fails to mount."""
+    (not None) on a swapless box, silently degenerating the combined floor to RAM-only at 256 —
+    stricter than the old 120, but a false-halt class if the swapfile ever fails to mount."""
     try:
         with open("/proc/meminfo", encoding="ascii") as f:
             for line in f:
@@ -169,8 +171,8 @@ def read_swap_total_mb() -> float | None:
 
 
 def read_tmpfs_used_mb(path: str = "/tmp") -> float | None:
-    """Bytes used on the filesystem holding `path`, in MB. Where /tmp is a tmpfs this is RAM
-    consumed by files. Linux-only: elsewhere /tmp is ordinary disk (macOS statvfs reports the
+    """Bytes used on the filesystem holding `path`, in MB. On this box /tmp is tmpfs, so this is
+    RAM consumed by files. Linux-only: elsewhere /tmp is ordinary disk (macOS statvfs reports the
     whole APFS volume), so this returns None rather than a number that is not memory."""
     if sys.platform != "linux":
         return None
@@ -211,7 +213,8 @@ def assess(rss_mb: float | None, avail_mb: float | None, tmpfs_used_mb: float | 
         if limits.hard_ram_floor_mb > 0 and avail_mb <= limits.hard_ram_floor_mb:
             # No `and not halt`: if BOTH floors are breached the record must say so — a halt
             # below the residency floor means "expect a degraded flatten, go check the venue",
-            # and suppressing that attribution under the milder combined reason hides it.
+            # and suppressing that attribution under the milder combined reason hides it
+            # [mm-review round-2 concern 5].
             halt = True
             reasons.append(f"system avail {avail_mb:.0f}MB <= hard RAM floor "
                            f"{limits.hard_ram_floor_mb:.0f}MB — teardown needs resident memory "
@@ -223,15 +226,15 @@ def assess(rss_mb: float | None, avail_mb: float | None, tmpfs_used_mb: float | 
     if limits.warn_rss_mb > 0 and rss_mb is not None and rss_mb >= limits.warn_rss_mb:
         reasons.append(f"rss {rss_mb:.0f}MB >= warn {limits.warn_rss_mb:.0f}MB")
     if limits.warn_avail_mb > 0 and avail_mb is not None and avail_mb <= limits.warn_avail_mb:
-        # RAM-avail low with swap headroom left = the host is paging: quote-cycle latency, not an
+        # RAM-avail low with swap headroom left = the box is paging: quote-cycle latency, not an
         # imminent kill. Never halts — the combined floor above owns the halt.
         reasons.append(f"system avail {avail_mb:.0f}MB <= {limits.warn_avail_mb:.0f}MB — paging "
                        f"territory (swap free {_fmt(swap_free_mb)}); expect latency jitter")
     if (limits.tmpfs_warn_mb > 0 and tmpfs_used_mb is not None
             and tmpfs_used_mb >= limits.tmpfs_warn_mb):
         # Never halts — see the module docstring.
-        reasons.append(f"{limits.tmpfs_path} holds {tmpfs_used_mb:.0f}MB and is RAM-backed "
-                       f"(>= {limits.tmpfs_warn_mb:.0f}MB)")
+        reasons.append(f"{limits.tmpfs_path} holds {tmpfs_used_mb:.0f}MB and is RAM-backed on "
+                       f"this box (>= {limits.tmpfs_warn_mb:.0f}MB)")
     if reasons:
         return MemStatus("warn", "; ".join(reasons), rss_mb, avail_mb, tmpfs_used_mb,
                          swap_free_mb)
@@ -281,7 +284,7 @@ def check(limits: MemLimits | None = None, *, label: str = "") -> MemStatus:
     global _swap_total_checked
     if not _swap_total_checked:
         # Latches on the FIRST read either way — swap presence doesn't change mid-process, and
-        # re-reading /proc/meminfo every quote cycle for a constant is waste.
+        # re-reading /proc/meminfo every quote cycle for a constant is waste [round-3 nit].
         try:
             total = read_swap_total_mb()
             if total is not None:

@@ -1,0 +1,67 @@
+{
+  "_doc": "EXAMPLE registry, placeholder values only. This file shows the SHAPE the loader (bot/core/probe_config.py) reads: every knob the probe lane resolves lives here, the file supplies every argparse default, a CLI flag overrides it, and the launch banner names the source of each value. Slugs are fake, sizes are 1, every other value is a placeholder. Arming flags are CLI-only and never appear in this file. The loader fails closed at the point of use: a missing key, an unknown key or a wrong type refuses the launch.",
+  "lane": {
+    "_amendment": "example",
+    "size_plan": {
+      "default": [1],
+      "by_class": {"example-class": [1]},
+      "by_slug": {"example-slug-a": [1]}
+    },
+    "cap_fills": 1,
+    "cap_fills_registered": [1],
+    "max_cells": 1,
+    "max_seconds": 1,
+    "loss_cap": "1",
+    "requote_s": 1.0,
+    "requote_arms_registered": [1],
+    "order_ttl_s": null,
+    "flow_floor_gate_mult": 1,
+    "fractional_close": "off",
+    "quotability_gate": {
+      "mode": "off",
+      "window_s": 1,
+      "min_two_sided_share": "0",
+      "min_arrivals_per_h": 1
+    }
+  },
+  "supervisor": {
+    "_amendment": "example",
+    "cycle_seconds": 1,
+    "kalshi_sidecar": false,
+    "reseat_s": 1
+  },
+  "launch": {
+    "_amendment": "example",
+    "improve_ab": false,
+    "requote_ab": false,
+    "requote_arms_s": ["1"],
+    "rebate_step": false,
+    "rebate_step_mode": "off",
+    "rebate_step_max": 1,
+    "depth_sidecar": false,
+    "gamestate_sidecar": false,
+    "conditional_poll": false
+  },
+  "latch": {
+    "_amendment": "example",
+    "rule": "off",
+    "ban_arms_s": [1],
+    "control_share": "0",
+    "off_classes": ["example-class"]
+  },
+  "clock_guard": {
+    "_amendment": "example",
+    "classes": ["example-class"]
+  },
+  "admission": {
+    "_amendment": "example",
+    "groups": {"example-group": 1},
+    "class_refused": ["example-refused-class"],
+    "explore": {"example-explore-class": 1}
+  },
+  "backfill": {
+    "_amendment": "example",
+    "min_prints": 1,
+    "class_exclude": ["example-class"]
+  }
+}

@@ -28,7 +28,7 @@ def test_order_filled_qty_reads_cumquantity():
 def test_order_filled_qty_ignores_the_lying_first_execution():
     """max() across executions is LOAD-BEARING — executions[0] LIES.
 
-    Pinned to a REAL response captured from the venue: we asked for
+    Pinned to a REAL response [VERIFIED 2026-07-15, scripts/poly_fok_probe.py]: we asked for
     tif=FILL_OR_KILL, the exchange echoed IMMEDIATE_OR_CANCEL and PARTIAL-FILLED 255/300 —
     and the FIRST execution's order still carried cumQuantity=0 / leavesQuantity=300, with only
     a LATER execution carrying 255.
@@ -41,7 +41,7 @@ def test_order_filled_qty_ignores_the_lying_first_execution():
         "id": "B8G89C9MC75G",
         "executions": [
             {"id": "B8GTKWM4A6AH", "order": {
-                "id": "B8G89C9MC75G", "marketSlug": "tec-mls-winner-2026-11-07-dcu",
+                "id": "B8G89C9MC75G", "marketSlug": "example-winner-2026-11-07-dcu",
                 "side": "ORDER_SIDE_BUY", "type": "ORDER_TYPE_LIMIT",
                 "price": {"value": "0.009", "currency": "USD"},
                 "quantity": 300, "cumQuantity": 0, "leavesQuantity": 300,
@@ -119,7 +119,7 @@ async def test_get_settlement_parses_numeric_field():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeSettlementMarkets({"slug": "x", "settlement": 1})
-    assert await client.get_settlement("exg-mlb-tor-bos") == pytest.approx(1.0)
+    assert await client.get_settlement("aec-mlb-tor-bos") == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_get_settlement_zero_is_valid_not_missing():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeSettlementMarkets({"slug": "x", "settlement": 0})
-    assert await client.get_settlement("exg-mlb-tor-bos::short") == pytest.approx(0.0)
+    assert await client.get_settlement("aec-mlb-tor-bos::short") == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_get_fill_quote_long_open():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", offers=[0.48, 0.49]))
-    ask, state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
+    ask, state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
     assert ask == pytest.approx(0.48) and state == "MARKET_STATE_OPEN"
     # long: offers as-is in ask-space, both levels carried (caller sums fillable-at-limit)
     assert levels == [(0.48, 100.0), (0.49, 100.0)]
@@ -187,7 +187,7 @@ async def test_get_fill_quote_short_one_minus_bid():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", bids=[0.47, 0.46]))
-    ask, state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos::short")
+    ask, state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos::short")
     assert ask == pytest.approx(0.53)   # 1 − best bid 0.47
     # short: bids normalized to ASK space (1−px), so the caller's `p <= poly_limit` is
     # apples-to-apples — this is the one place a space-mismatch would hide.
@@ -200,7 +200,7 @@ async def test_get_fill_quote_reports_suspended_state():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_SUSPENDED", offers=[0.38]))
-    ask, state, _levels, _tx, _stats = await client.get_fill_quote("exg-fwc-sui-bih")
+    ask, state, _levels, _tx, _stats = await client.get_fill_quote("aec-fwc-sui-bih")
     assert state == "MARKET_STATE_SUSPENDED"   # caller must refuse this
 
 
@@ -239,7 +239,7 @@ async def test_get_fill_quote_returns_transact_time():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = _FakeSDK(book)
-    _ask, _state, _levels, tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
+    _ask, _state, _levels, tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
     assert tx == "2026-06-22T19:30:20.818756170Z"
 
 
@@ -284,7 +284,7 @@ async def test_get_fill_quote_carries_stats():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = _FakeSDK(book)
-    _ask, _state, _levels, _tx, stats = await client.get_fill_quote("exg-mlb-tor-bos")
+    _ask, _state, _levels, _tx, stats = await client.get_fill_quote("aec-mlb-tor-bos")
     assert stats["open_interest"] == pytest.approx(777.0)
     assert stats["last_trade_px"] == pytest.approx(0.48)
 
@@ -294,12 +294,12 @@ async def test_get_fill_quote_fresh_busts_cache_via_nonce_get():
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     sdk = client._sdk = _FakeSDK(_book("MARKET_STATE_OPEN", offers=[0.48]))
-    await client.get_fill_quote("exg-mlb-tor-bos")            # default → resource method
+    await client.get_fill_quote("aec-mlb-tor-bos")            # default → resource method
     assert sdk.get_calls == []                                # no raw .get()
-    await client.get_fill_quote("exg-mlb-tor-bos", fresh=True)  # fresh → raw .get() w/ nonce
+    await client.get_fill_quote("aec-mlb-tor-bos", fresh=True)  # fresh → raw .get() w/ nonce
     assert len(sdk.get_calls) == 1
     path, query = sdk.get_calls[0]
-    assert path == "/v1/markets/exg-mlb-tor-bos/book"
+    assert path == "/v1/markets/aec-mlb-tor-bos/book"
     assert "_" in query and query["_"]                        # nonce present, non-empty
 
 
@@ -312,8 +312,8 @@ async def test_get_fill_quote_cached_and_fresh_paths_structurally_equivalent():
     book["marketData"]["transactTime"] = "2026-06-22T19:30:20.818000000Z"
     c1 = PolyUSClient.__new__(PolyUSClient); c1._dry_run = False; c1._sdk = _FakeSDK(book)
     c2 = PolyUSClient.__new__(PolyUSClient); c2._dry_run = False; c2._sdk = _FakeSDK(book)
-    cached = await c1.get_fill_quote("exg-mlb-tor-bos")              # markets.book path
-    fresh = await c2.get_fill_quote("exg-mlb-tor-bos", fresh=True)   # nonce .get() path
+    cached = await c1.get_fill_quote("aec-mlb-tor-bos")              # markets.book path
+    fresh = await c2.get_fill_quote("aec-mlb-tor-bos", fresh=True)   # nonce .get() path
     assert cached == fresh
     assert cached[0] == pytest.approx(0.48) and cached[3] == "2026-06-22T19:30:20.818000000Z"
 
@@ -366,8 +366,8 @@ async def test_sampler_depth_matches_get_book_depth_long():
     client._sdk.markets = _FakeBookMarkets(
         _book_q("MARKET_STATE_OPEN", offers=[(0.48, 40), (0.49, 100)])
     )
-    old = await client.get_book_depth("exg-mlb-tor-bos")
-    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos")
+    old = await client.get_book_depth("aec-mlb-tor-bos")
+    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos")
     assert old == _sampler_best_level_depth(levels) == 40.0   # qty at best offer 0.48
 
 
@@ -382,8 +382,8 @@ async def test_sampler_depth_matches_get_book_depth_short():
     client._sdk.markets = _FakeBookMarkets(
         _book_q("MARKET_STATE_OPEN", bids=[(0.30, 40), (0.29, 100)])
     )
-    old = await client.get_book_depth("exg-mlb-tor-bos::short")
-    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("exg-mlb-tor-bos::short")
+    old = await client.get_book_depth("aec-mlb-tor-bos::short")
+    _ask, _state, levels, _tx, _stats = await client.get_fill_quote("aec-mlb-tor-bos::short")
     assert _ask == pytest.approx(0.70)                       # 1 − best bid 0.30
     assert old == _sampler_best_level_depth(levels) == 40.0  # space-invariant qty
 
@@ -472,8 +472,8 @@ async def test_place_limit_fok_builds_fok_buy_long_order():
     assert p["marketSlug"] == "slug-x"
     assert p["intent"] == "ORDER_INTENT_BUY_LONG"
     assert p["type"] == "ORDER_TYPE_LIMIT"
-    # IOC, not FOK: Poly does not honor FOK — it silently rewrites it to IOC, observed on a real
-    # order that came back partially filled. We now send what we actually get, so a
+    # IOC, not FOK: Poly does not honor FOK — it silently rewrites it to IOC [VERIFIED
+    # 2026-07-15 on a real order, 255/300 partial]. We now send what we actually get, so a
     # future Poly FOK rollout cannot silently turn our orders all-or-nothing.
     assert p["tif"] == "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL"
     assert p["manualOrderIndicator"] == "MANUAL_ORDER_INDICATOR_AUTOMATIC"
@@ -573,8 +573,8 @@ async def test_sell_back_sells_at_best_bid():
     assert sold == 100.0
     p = client._sdk.orders.calls[0]
     assert p["intent"] == "ORDER_INTENT_SELL_LONG"
-    # IOC, not FOK: Poly does not honor FOK — it silently rewrites it to IOC, observed on a real
-    # order that came back partially filled. We now send what we actually get, so a
+    # IOC, not FOK: Poly does not honor FOK — it silently rewrites it to IOC [VERIFIED
+    # 2026-07-15 on a real order, 255/300 partial]. We now send what we actually get, so a
     # future Poly FOK rollout cannot silently turn our orders all-or-nothing.
     assert p["tif"] == "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL"
     assert p["price"] == {"value": "0.6000", "currency": "USD"}
@@ -587,17 +587,18 @@ async def test_place_limit_fok_short_token_uses_buy_short_and_strips_suffix():
     passes is complemented to YES space for the wire.
 
     The caller convention is unchanged (short-space, because `opp.poly_ask_raw` already carries
-    that for a `::short` token). What the wire needs is different: the venue reads a BUY_SHORT
+    that for a `::short` token). What changed 2026-07-28 is the wire: the venue reads a BUY_SHORT
     price in YES space as a sell limit, so a caller's 0.53 must ship as 0.47. Sending 0.53
     unconverted still FILLED — an aggressive sell with too low a limit fills at the touch — but the
-    caller's price bound was not the one being enforced, which is the whole point of a limit."""
+    caller's price bound was not the one being enforced.
+    the private design notes"""
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.orders = _FakeOrders({"order": {"status": "killed"}})
-    await client.place_limit_fok("exg-mlb-tor-bos::short", 0.53, 50, "[t]")
+    await client.place_limit_fok("aec-mlb-tor-bos::short", 0.53, 50, "[t]")
     p = client._sdk.orders.last_params
-    assert p["marketSlug"] == "exg-mlb-tor-bos"          # suffix stripped
+    assert p["marketSlug"] == "aec-mlb-tor-bos"          # suffix stripped
     assert p["intent"] == "ORDER_INTENT_BUY_SHORT"
     assert p["price"] == {"value": "0.4700", "currency": "USD"}
     assert p["quantity"] == 50
@@ -610,7 +611,7 @@ async def test_place_limit_fok_long_token_price_is_untouched():
     client._dry_run = False
     client._sdk = type("S", (), {})()
     client._sdk.orders = _FakeOrders({"order": {"status": "killed"}})
-    await client.place_limit_fok("exg-mlb-tor-bos", 0.53, 50, "[t]")
+    await client.place_limit_fok("aec-mlb-tor-bos", 0.53, 50, "[t]")
     p = client._sdk.orders.last_params
     assert p["intent"] == "ORDER_INTENT_BUY_LONG"
     assert p["price"] == {"value": "0.5300", "currency": "USD"}
@@ -621,11 +622,11 @@ async def test_sell_back_short_position_sells_short_at_the_yes_ask():
     """Unwinding a SHORT leg: SELL_SHORT at the best yes ASK, **in yes space** (it buys the yes
     side back, so it crosses the offers, not the bids). Preserves the stranded-leg invariant.
 
-    ⛔ This asserted `1 − best ask`, which made the short flatten IMPOSSIBLE rather than merely
-    mispriced: against a 0.849/0.853 book it sent 0.147, i.e. "buy yes back at 0.147 or better"
-    while yes was offered at 0.853 — it could never fill, and live it did not, with the leg
-    reported stranded. Proven by a real order: SELL_SHORT at yes-space 0.8530 filled at 0.8530
-    and closed the position."""
+    ⛔ This asserted `1 − best ask` until 2026-07-28, which made the short flatten IMPOSSIBLE rather
+    than mispriced: against a 0.849/0.853 book it sent 0.147, i.e. "buy yes back at 0.147 or
+    better" while yes was offered at 0.853 — it could never fill, and live it did not, twice, with
+    the leg reported stranded. Proven by a real order: SELL_SHORT at yes-space 0.8530 filled at
+    0.8530 and closed the position. the private design notes"""
     class _Orders:
         def __init__(self):
             self.calls = []
@@ -639,10 +640,10 @@ async def test_sell_back_short_position_sells_short_at_the_yes_ask():
         {"px": {"value": "0.45", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    price, sold = await client.sell_back("exg-mlb-tor-bos::short", 30, "[t]")
+    price, sold = await client.sell_back("aec-mlb-tor-bos::short", 30, "[t]")
     assert price == pytest.approx(0.40)  # the best yes ask, in yes space
     p = client._sdk.orders.calls[0]
-    assert p["marketSlug"] == "exg-mlb-tor-bos"
+    assert p["marketSlug"] == "aec-mlb-tor-bos"
     assert p["intent"] == "ORDER_INTENT_SELL_SHORT"
     assert p["price"] == {"value": "0.4000", "currency": "USD"}
 
@@ -719,7 +720,7 @@ async def test_get_book_depth_short_uses_best_bid_level():
     client = PolyUSClient.__new__(PolyUSClient)
     client._sdk = type("S", (), {})()
     client._sdk.markets = _FakeBookMarkets(_book("MARKET_STATE_OPEN", bids=[0.47, 0.46]))
-    assert await client.get_book_depth("exg-mlb-tor-bos::short") == pytest.approx(100.0)  # best bid 0.47 only
+    assert await client.get_book_depth("aec-mlb-tor-bos::short") == pytest.approx(100.0)  # best bid 0.47 only
 
 
 @pytest.mark.asyncio
@@ -737,7 +738,7 @@ async def test_get_book_depth_none_on_empty_and_error():
 
 
 # ── sell_back partial fills (the IOC consequence) ─────────────────────────────────────────────
-# Poly rewrites our FOK->IOC (observed on a real order), so a SELL can partial-fill.
+# Poly rewrites our FOK->IOC [VERIFIED 2026-07-15 on a real order], so a SELL can partial-fill.
 # sell_back's "try best, retry 2c worse" design assumed all-or-nothing: attempt 1 either filled
 # completely or did nothing. It doesn't. Pin the real state space.
 
@@ -822,7 +823,7 @@ from bot.poly_us.sides import parse_token
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("token", ["exg-mlb-tor-bos", "exg-mlb-tor-bos::short"])
+@pytest.mark.parametrize("token", ["aec-mlb-tor-bos", "aec-mlb-tor-bos::short"])
 async def test_quote_from_md_is_exactly_what_get_fill_quote_returns(token, monkeypatch):
     """The anti-drift property, stated as an assertion.
 
@@ -927,7 +928,7 @@ class _GtcCachedMarkets:
     Every Poly public GET is Cloudflare max-age=30 and neither of these cache-busts, so a guard
     reading them can authorize a placement against a touch up to 30s old — fail-OPEN, because a
     stale-HIGH ask lets a crossing buy through while a stale-LOW one only false-refuses. `bbo` is
-    the route the guard used before this was caught, so it raises: that regression should be
+    the route the guard actually used until 2026-07-27, so it raises: that regression should be
     loud in every test, not only the three that count reads."""
 
     def __init__(self, sdk: "_GtcSdk"):
@@ -975,14 +976,19 @@ def _gtc_client(best_ask: str | None = None, best_bid: str | None = None) -> Pol
     client = PolyUSClient.__new__(PolyUSClient)
     client._dry_run = False
     client._sdk = _GtcSdk(best_bid, best_ask)
+    # `__new__` bypasses `__init__`, so the guard's tape map has to be seeded here the way the
+    # real constructor seeds it.
+    client.last_guard_book = {}
+    client.last_ack_lag_ms = {}
+    client._guard_refusal_state = {}
     return client
 
 
 @pytest.mark.asyncio
 async def test_place_limit_gtc_post_only_sets_participate_dont_initiate():
     """post_only=True must reach the wire as `participateDontInitiate: True` — the venue-side
-    maker guarantee the whole rebate case rests on. Proven enforced on real money: the order
-    RESTS rather than being rejected."""
+    maker guarantee the rebate probe relies on (poly_us_mm_universe §6.2; proven enforced on real
+    money 2026-07-19, the order RESTS rather than being rejected)."""
     client = _gtc_client(best_ask="0.60")
     await client.place_limit_gtc("slug-x", 0.50, 1, "[t]", post_only=True)
     p = client._sdk.orders.calls[0]
@@ -1089,13 +1095,14 @@ async def test_place_limit_gtc_sell_rests_a_synthetic_ask_as_BUY_SHORT_at_the_co
 
     ⚠️ The DIRECTION above is the durable part. The price-space claim that used to follow it — that
     a `*_SHORT` intent is priced in SHORT space — was WRONG and is corrected below: the venue reads
-    both short intents in YES space, so the ask goes on the wire at p, not 1−p."""
+    both short intents in YES space, so the ask goes on the wire at p, not 1−p.
+    the private design notes"""
     client = _gtc_client_2s(best_bid="0.40", best_ask="0.45")
     await client.place_limit_gtc("slug-x", 0.44, 2, "[t]", side="sell")
     p = client._sdk.orders.calls[0]
     assert p["intent"] == "ORDER_INTENT_BUY_SHORT"
     assert p["tif"] == "TIME_IN_FORCE_GOOD_TILL_CANCEL"
-    # ⛔ YES SPACE, NOT the complement. This used to assert "0.5600". The venue reads a
+    # ⛔ YES SPACE, NOT the complement. This asserted "0.5600" until 2026-07-28. The venue reads a
     # BUY_SHORT price as a yes-space SELL limit, so 0.5600 meant "sell down to 0.56" — against a
     # 0.40 bid that is deeply marketable, which is why every real attempt was either post-only
     # REJECTED or filled instantly at the bid as a taker.
@@ -1228,7 +1235,7 @@ async def test_place_limit_gtc_sell_dry_run_still_runs_the_crossing_guard():
     assert client._sdk.orders.calls == []
 
 
-# ── place_limit_gtc BUY side — the three defects a money-path review turned up ────────────────
+# ── place_limit_gtc BUY side — the three defects mm-review flagged 2026-07-26 ──────────────────
 
 
 @pytest.mark.asyncio
@@ -1366,7 +1373,8 @@ def test_wire_price_takes_a_Decimal_EXACTLY_never_through_float():
 async def test_place_limit_gtc_accepts_a_Decimal_price_on_the_wire():
     """Callers holding exact Decimal prices pass them straight through — no float cast at the
     call site. The witness is >4dp just below a half-centicent tie so the float-laundered
-    path answers differently (0.4444) — a 4dp witness would pass either way and pin nothing."""
+    path answers differently (0.4444) — a 4dp witness would pass either way and pin nothing
+    [mm-review NIT-3]."""
     client = _gtc_client(best_ask="0.60")
     await client.place_limit_gtc("slug-x", Decimal("0.44434999999999999999"), 1, "[t]")
     assert client._sdk.orders.calls[0]["price"] == {"value": "0.4443", "currency": "USD"}
@@ -1374,7 +1382,7 @@ async def test_place_limit_gtc_accepts_a_Decimal_price_on_the_wire():
 
 def test_wire_price_refuses_a_non_finite_price_with_the_TYPED_refusal():
     """No literal ever shipped (Infinity dies at the quantize, NaN at the crossing compare —
-    both InvalidOperation); the guard's value is the TYPE. The asserts
+    both InvalidOperation [round-3 mm-review]); the guard's value is the TYPE. The asserts
     pin `PreSendRefusal`, not bare ValueError — `_place` clears its durable intent on the
     type alone, so a one-word revert to ValueError restores the phantom-intent bug with a
     green suite unless this pins it."""
@@ -1441,7 +1449,7 @@ def test_touch_from_md_bid_tob_is_the_SUM_at_the_best_price():
 
 
 def test_touch_from_md_tob_sums_quantities_EXACTLY():
-    """Quantities are Decimal too, and summed exactly. `Decimal(float("0.1"))`
+    """Quantities are Decimal too (CLAUDE.md § Code style), summed exactly. `Decimal(float("0.1"))`
     is 0.1000000000000000055511151231257827, so a laundered sum is not equal to the number anyone
     would compare it against."""
     _bid, _ask, tob = touch_from_md({"bids": [_lvl("0.50", "0.1"), _lvl("0.50", "0.2")],
@@ -1451,7 +1459,7 @@ def test_touch_from_md_tob_sums_quantities_EXACTLY():
 
 def test_touch_from_md_reads_prices_EXACTLY_as_decimals():
     """Prices are Decimal parsed from the venue's string form — a float hop would launder binary
-    error into the number a crossing guard compares against."""
+    error into the number a crossing guard compares against (CLAUDE.md § Code style)."""
     md = {"bids": [_lvl("0.005")], "offers": [_lvl("0.995")]}
     bid, ask, _tob = touch_from_md(md)
     assert (bid, ask) == (Decimal("0.005"), Decimal("0.995"))
@@ -1516,7 +1524,7 @@ def _tick_client(payload) -> PolyUSClient:
 
 @pytest.mark.asyncio
 async def test_get_market_tick_parses_the_bare_number_shape():
-    """Confirmed against the live venue: it wraps as {'market': {...}} and sends the tick as a BARE number,
+    """[VERIFIED live] the venue wraps as {'market': {...}} and sends the tick as a BARE number,
     unlike its neighbouring {value,currency} price fields."""
     from decimal import Decimal
     client = _tick_client({"market": {"orderPriceMinTickSize": 0.001}})
@@ -1554,10 +1562,10 @@ async def test_get_market_tick_none_on_missing_unparseable_or_error():
 
 @pytest.mark.asyncio
 async def test_sell_back_short_retry_pays_MORE_not_less():
-    """⛔ "2¢ through the touch" is a different DIRECTION on each side.
+    """⛔ "<n> through the touch" is a different DIRECTION on each side.
 
-    Disposing of a LONG sells, so conceding means accepting LESS (−2¢). Disposing of a SHORT buys
-    the yes side back, so conceding means paying MORE (+2¢). A single `best_price - 0.02` ladder
+    Disposing of a LONG sells, so conceding means accepting LESS (−<n>). Disposing of a SHORT buys
+    the yes side back, so conceding means paying MORE (+<n>). A single `best_price - 0.02` ladder
     applied the long direction to both, making the short retry strictly LESS likely to fill than
     the attempt it was meant to rescue — a rescue that moved away from the book.
     """
@@ -1573,7 +1581,7 @@ async def test_sell_back_short_retry_pays_MORE_not_less():
         {"px": {"value": "0.40", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("exg-mlb-tor-bos::short", 5, "[t]")
+    await client.sell_back("aec-mlb-tor-bos::short", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert len(prices) == 2, f"expected a retry, got {prices}"
     assert prices[0] == pytest.approx(0.40)
@@ -1596,7 +1604,7 @@ async def test_sell_back_long_retry_still_accepts_LESS():
         {"px": {"value": "0.40", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("exg-mlb-tor-bos", 5, "[t]")
+    await client.sell_back("aec-mlb-tor-bos", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert len(prices) == 2
     assert prices[1] < prices[0], f"long retry must accept LESS, got {prices}"
@@ -1605,7 +1613,7 @@ async def test_sell_back_long_retry_still_accepts_LESS():
 
 @pytest.mark.asyncio
 async def test_sell_back_short_retry_never_lands_behind_the_first_attempt():
-    """The +2¢ clamp must not re-create the no-op it exists to remove.
+    """The +<n> clamp must not re-create the no-op it exists to remove.
 
     A flat `min(0.99, best+0.02)` makes the retry LESS marketable than attempt 1 whenever the yes
     ask already exceeds 0.99 — the deepest-adverse regime, i.e. precisely when a short flatten is
@@ -1623,7 +1631,7 @@ async def test_sell_back_short_retry_never_lands_behind_the_first_attempt():
         {"px": {"value": "0.995", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("exg-mlb-tor-bos::short", 5, "[t]")
+    await client.sell_back("aec-mlb-tor-bos::short", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert prices[1] >= prices[0], (
         f"short retry must never be LESS marketable than attempt 1; got {prices}")
@@ -1644,7 +1652,7 @@ async def test_sell_back_long_retry_never_lands_behind_the_first_attempt():
         {"px": {"value": "0.005", "currency": "USD"}, "qty": "10"},
     ]}})
     client._sdk.orders = _Orders()
-    await client.sell_back("exg-mlb-tor-bos", 5, "[t]")
+    await client.sell_back("aec-mlb-tor-bos", 5, "[t]")
     prices = [float(c["price"]["value"]) for c in client._sdk.orders.calls]
     assert prices[1] <= prices[0], (
         f"long retry must never be LESS marketable than attempt 1; got {prices}")
@@ -1680,7 +1688,7 @@ async def test_preview_order_short_validates_the_SAME_wire_price_as_place_limit_
 
 @pytest.mark.asyncio
 async def test_place_limit_gtc_ships_a_fractional_quantity_EXACTLY_as_a_string():
-    """A live preview probe showed the venue echoes fractional quantities unrounded (0.8, 12.8,
+    """[box probe 2026-08-06] Preview echoes fractional quantities unrounded (0.8, 12.8,
     "0.80" all exact; integer control clean), so the int(round(size)) wire cast — which
     silently reshaped 12.80 into 13, the overshoot-through-flat class — is retired. A
     fractional size ships as the exact STRING form of its Decimal (the venue accepted the
@@ -1707,13 +1715,13 @@ async def test_place_limit_gtc_integral_quantity_wire_is_byte_identical_int():
 
 
 class TestOrderExVerdicts:
-    """get_order_ex/cancel_order_ex return TYPED verdicts —
+    """[belief-recovery v5 §2] get_order_ex/cancel_order_ex return TYPED verdicts —
     ok | not_found | error — because the SDK's NotFoundError fires on ANY 404 (a
     renamed route included), and its `message` degrades to the bare reason-phrase
     when the body is not JSON. Verdict `not_found` therefore requires a STRUCTURED
     venue body; a bare-reason-phrase 404 is `error`, never terminal — otherwise an
     SDK base-URL drift retires every resting order at once and re-places over live
-    ones — the load-bearing failure mode this whole class exists to hold shut."""
+    ones [v5's B2, the round-4 load-bearing blocker]."""
 
     def _client(self):
         from bot.poly_us.client import PolyUSClient
@@ -1768,6 +1776,20 @@ class TestOrderExVerdicts:
         body, verdict = asyncio.run(c.get_order_ex("X"))
         assert body is None and verdict == "error"
 
+    def test_a_box_ban_refusal_is_the_BANNED_verdict_never_a_venue_answer(self):
+        """ `venue_budget.try_take` raises `VenueBanned` INSIDE the
+        SDK call when the box ban stands and `allow_during_ban` is False — no HTTP left the box.
+        Collapsing it into `error` made the maker log "REFUSED by the venue" for a cancel the
+        venue never saw; the recovery pass must not count it as an answered attempt."""
+        import asyncio
+
+        from bot.core import venue_budget
+        c = self._client()
+        c._sdk = self._SDKRaise(venue_budget.VenueBanned(until=4_000_000_000.0))
+        ok, cv = asyncio.run(c.cancel_order_ex("X", "slug"))
+        assert ok is False and cv == "banned"
+        assert PolyUSClient._order_verdict(venue_budget.VenueRefused("lock")) == "banned"
+
     def test_success_passes_the_body_through_and_get_order_wrapper_unchanged(self):
         import asyncio
         c = self._client()
@@ -1789,7 +1811,7 @@ class TestOrderExVerdicts:
         assert ok is True and cv == "ok"
 
     def test_sdk_absent_and_dry_run_branches_are_pinned(self, monkeypatch):
-        """Both fallbacks point the SAFE way and must be held there:
+        """[unit-1 review] both fallbacks point the SAFE way and must be held there:
         SDK-absent classifies error (never a fabricated terminal not_found), and a
         DRY cancel answers ok (the WAS-LIVE path) — a DRY not_found would let a dry
         preview retire orders it believes live, diverging DRY from live in exactly
@@ -1811,3 +1833,576 @@ class TestOrderExVerdicts:
         c._dry_run = True
         ok, verdict = asyncio.run(c.cancel_order_ex("X", "slug"))
         assert (ok, verdict) == (True, "ok")
+
+
+# ── `side="sell_long"` — the PASSIVE CLOSE OF A HELD LONG ─────────────────
+
+@pytest.mark.asyncio
+async def test_sell_long_ships_SELL_LONG_not_BUY_SHORT():
+    """⛔ THE ONE DIFFERENCE, AND IT IS THE WHOLE POINT. `side="sell"` is
+    `ORDER_INTENT_BUY_SHORT` — a resting ask that OPENS a short. Disposing of a long we already
+    hold is `ORDER_INTENT_SELL_LONG` (what `sell_back` resolves for a long, and what
+    `poly_fractional_preview_probe --sell-held` previews). Everything else on the wire is
+    identical: yes space, uncomplemented, 4dp, GTC, post-only omitted unless asked.
+
+    MUTANT: map `sell_long` to BUY_SHORT → RED — and the failure it prevents is a "close" that
+    leaves the long untouched and opens a short beside it."""
+    client = _gtc_client_2s(best_bid="0.40", best_ask="0.45")
+    await client.place_limit_gtc("slug-x", 0.44, 2, "[t]", side="sell_long")
+    assert client._sdk.orders.calls[0] == {
+        "marketSlug": "slug-x",
+        "intent": "ORDER_INTENT_SELL_LONG",
+        "type": "ORDER_TYPE_LIMIT",
+        # ⛔ YES SPACE, NOT the complement — the same rule the 2026-07-28 six-order proof
+        # established for both short intents, and the same one `--sell-held` previews under.
+        "price": {"value": "0.4400", "currency": "USD"},
+        "quantity": 2,
+        "tif": "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+        "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sell_long_ships_a_FRACTIONAL_quantity_as_the_exact_string():
+    """The sub-contract case this exists for. `_wire_quantity` sends the fixed-point STRING for a
+    fraction (integral sizes stay `int`), so a 0.53 close is 0.53 — never `int(round(0.53))`,
+    which is 1 and fills through flat into a fresh short."""
+    client = _gtc_client_2s(best_bid="0.40", best_ask="0.45")
+    await client.place_limit_gtc("slug-x", Decimal("0.44"), Decimal("0.53"), "[t]",
+                                 side="sell_long", post_only=True)
+    p = client._sdk.orders.calls[0]
+    assert p["quantity"] == "0.53" and p["intent"] == "ORDER_INTENT_SELL_LONG"
+    assert p["participateDontInitiate"] is True, "a close must not take the spread"
+
+
+@pytest.mark.asyncio
+async def test_sell_long_obeys_the_SAME_crossing_guard_as_an_ordinary_ask():
+    """A close is still a resting order: at or below the bid it would cross and pay the taker fee
+    (~5% of notional at dust size — close_position_audit_2026-09 § cost). Refuse, as `sell` does.
+    ⛔ And an unreadable touch FAILS CLOSED on this side too — a guard that cannot run refuses."""
+    client = _gtc_client_2s(best_bid="0.40", best_ask="0.45")
+    assert await client.place_limit_gtc("slug-x", 0.40, 1, "[t]", side="sell_long") is None
+    assert await client.place_limit_gtc("slug-x", 0.39, 1, "[t]", side="sell_long") is None
+    assert client._sdk.orders.calls == []
+    blind = _gtc_client_2s(best_bid=None, best_ask="0.45")
+    assert await blind.place_limit_gtc("slug-x", 0.60, 1, "[t]", side="sell_long") is None
+    assert blind._sdk.orders.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sell_long_refuses_a_short_token_like_every_other_side():
+    """A short of a short has no coherent reading, and the guard would compare against the wrong
+    touch. Same `PreSendRefusal`, before any venue call."""
+    client = _gtc_client_2s(best_bid="0.40", best_ask="0.45")
+    with pytest.raises(PreSendRefusal, match="short"):
+        await client.place_limit_gtc("slug-x::short", 0.44, 1, "[t]", side="sell_long")
+    assert client._sdk.orders.calls == []
+
+
+# ── `get_market_meta` — ONE request, tick + per-market minimum ────────────
+
+@pytest.mark.asyncio
+async def test_get_market_meta_reads_BOTH_fields_from_ONE_request():
+    """⛔ `minimumTradeQty` IS PER-MARKET: 0.01 on `aec-*` game books, 1 on 684 `tec-*` futures
+    (`logs/universe/universe_20260826T0745.csv`). It rides the SAME payload as the tick, so the
+    maker's `prepare()` reads it for free — a second request per book would move a rate budget."""
+    client = _tick_client({"market": {"orderPriceMinTickSize": 0.005,
+                                      "minimumTradeQty": "0.01"}})
+    assert await client.get_market_meta("aec-x") == (Decimal("0.005"), Decimal("0.01"))
+    futures = _tick_client({"market": {"orderPriceMinTickSize": "0.01",
+                                       "minimumTradeQty": 1}})
+    assert await futures.get_market_meta("tec-y") == (Decimal("0.01"), Decimal("1"))
+
+
+@pytest.mark.asyncio
+async def test_get_market_meta_answers_None_per_field_for_could_not_tell():
+    """None is "could not tell", never a default — and the two fields fail INDEPENDENTLY, so an
+    absent minimum never costs us a readable tick (the book would then be dropped for nothing)."""
+    assert await _tick_client(
+        {"market": {"orderPriceMinTickSize": "0.01"}}).get_market_meta("s") == (
+            Decimal("0.01"), None)
+    assert await _tick_client(
+        {"market": {"minimumTradeQty": "1"}}).get_market_meta("s") == (None, Decimal("1"))
+    assert await _tick_client(
+        {"market": {"orderPriceMinTickSize": "0.01",
+                    "minimumTradeQty": "wat"}}).get_market_meta("s") == (Decimal("0.01"), None)
+    assert await _tick_client(RuntimeError("venue 502")).get_market_meta("s") == (None, None)
+    assert await _tick_client("not-a-dict").get_market_meta("s") == (None, None)
+
+
+# ── the crossing guard's own book, taped ────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_crossing_guard_tapes_the_book_it_read_on_a_refusal_AND_on_a_pass(monkeypatch):
+    """⛔ THE EVIDENCE RUN 282110 DID NOT HAVE. The guard refused a bid every 4 s for 348 s with
+    its ask frozen at 0.7300 while the maker's WS book fell 0.775→0.740, and the only record was
+    a WARNING string — no book, no age, and no way to tell a refusal row from a hold row.
+
+    `last_guard_book` must carry what the guard SAW on BOTH outcomes: `refused=True` on the
+    would-cross refusal and `refused=False` on the pass. `age_s` is the venue's own
+    `transactTime` age of that book — the column that decides stale-origin vs a real REST/WS
+    divergence — and `src` names the read (`rest_fresh` = the cache-busted `_fetch_book`).
+
+    ⛔ MUTANT: tape only on the refusal branch (or drop `age_s`) — the pass half goes RED, and
+    without both halves a frozen ask is unmeasurable against the placements that succeeded."""
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_030.0)
+    client = _gtc_client_2s(best_bid="0.7000", best_ask="0.7300")
+    md = client._sdk.book_payload()
+    md["marketData"]["transactTime"] = "2027-01-15T08:00:00.000000000Z"   # 1_800_000_000 epoch
+    client._sdk.book_payload = lambda: md
+
+    assert await client.place_limit_gtc("slug-x", 0.7750, 5, "[t]") is None, "0.775 ≥ 0.73 crosses"
+    seen = client.last_guard_book["slug-x"]
+    assert seen["refused"] is True
+    assert (seen["bid"], seen["ask"]) == (Decimal("0.7000"), Decimal("0.7300")), (
+        "the guard's OWN touch, exactly as it compared it")
+    assert seen["src"] == "rest_fresh"
+    assert seen["age_s"] == pytest.approx(30.0, abs=0.001), (
+        "the venue's transactTime age of the book the guard read — 30 s here")
+
+    assert await client.place_limit_gtc("slug-x", 0.7000, 5, "[t]") is not None, "0.70 < 0.73 rests"
+    passed = client.last_guard_book["slug-x"]
+    assert passed["refused"] is False, "a PASS tapes the guard's book too, flagged N"
+    assert (passed["bid"], passed["ask"]) == (Decimal("0.7000"), Decimal("0.7300"))
+
+
+@pytest.mark.asyncio
+async def test_the_create_ACK_SPAN_is_recorded_ONLY_when_an_ack_arrived(monkeypatch):
+    """⛔ MUTANT: stamp `_ack_t0` AFTER the `orders.create` await, or record on the refusal path
+    → RED. A guard refusal never reaches the venue, so a span written there would be the book
+    read's latency wearing an ack's name; and a span that does not BRACKET the await measures
+    nothing, which `>= 0.0` would happily accept.
+
+    A FAKE `perf_counter` advances by exactly 0.02 s inside the create and nowhere else, so the
+    recorded span must be exactly 20.0 ms — an EQUALITY, which a timer that does not bracket the
+    await answers with 0.0. TAPE-ONLY [I2]: nothing in this module branches on the value."""
+    client = _gtc_client_2s(best_bid="0.7000", best_ask="0.7300")
+    assert await client.place_limit_gtc("slug-x", 0.7750, 5, "[t]") is None, "0.775 crosses"
+    assert "slug-x" not in client.last_ack_lag_ms, (
+        "a guard refusal sent nothing — there is no ack to time")
+    clock = [100.0]
+    monkeypatch.setattr(client_mod.time, "perf_counter", lambda: clock[0])
+    _create = client._sdk.orders.create
+
+    async def _slow_create(body):
+        clock[0] += 0.02                       # 20 ms passes INSIDE the create, nowhere else
+        return await _create(body)
+
+    client._sdk.orders.create = _slow_create
+    assert await client.place_limit_gtc("slug-x", 0.7000, 5, "[t]") is not None
+    assert client.last_ack_lag_ms["slug-x"] == pytest.approx(20.0), (
+        f"the span must bracket the create await, exactly: got "
+        f"{client.last_ack_lag_ms['slug-x']!r} ms")
+
+
+@pytest.mark.asyncio
+async def test_a_guard_that_could_not_read_the_book_tapes_src_unread_and_refuses():
+    """The fail-closed branch is a REFUSAL with NO book, and the tape must say which: blank
+    touches under `src=unread` is a different fact from a readable book that crossed. Blank-vs-
+    unread is exactly the distinction a refusal-episode read has to make."""
+    client = _gtc_client(best_ask="0.60")
+
+    async def _boom(path, query=None):
+        raise RuntimeError("venue 502")
+
+    client._sdk.get = _boom
+    assert await client.place_limit_gtc("slug-x", 0.50, 1, "[t]") is None
+    seen = client.last_guard_book["slug-x"]
+    assert (seen["src"], seen["refused"]) == ("unread", True)
+    assert seen["bid"] is None and seen["ask"] is None and seen["age_s"] is None
+
+
+# ── the crossing guard ALERTS ON THE STATE CHANGE, not every requote [2026-09-03] ──────────────
+
+def _guard_records(caplog) -> list[tuple[str, str]]:
+    """(levelname, message) for the guard's own lines only, in order."""
+    return [(r.levelname, r.getMessage()) for r in caplog.records
+            if r.name == client_mod.log.name
+            and ("REFUSING GTC" in r.getMessage() or "cross guard cleared" in r.getMessage())]
+
+
+@pytest.mark.asyncio
+async def test_repeated_guard_refusals_alert_ONCE_then_drop_to_info(caplog):
+    """⛔ ONE PAGE PER EPISODE, NOT ONE PER REQUOTE. A refusal repeats every requote (~4 s) for as
+    long as the market condition holds, and the Discord handler dedups on EXACT text while the
+    guard suffix carries a moving `age_s=…` — so the 2026-09-03 evening paged the operator ~80
+    times for two books. First refusal on a (slug, side) = the alert (WARNING); every repeat is
+    log/tape only (INFO). The refusal TEXT is unchanged on both.
+
+    ⛔ MUTANT: emit `log.warning` unconditionally — the levels go [WARNING]*3 and this goes RED."""
+    caplog.set_level("INFO")
+    client = _gtc_client(best_ask="0.50")
+    for _ in range(3):
+        assert await client.place_limit_gtc("slug-x", 0.50, 1, "[t]") is None
+    levels = [lvl for lvl, _ in _guard_records(caplog)]
+    assert levels == ["WARNING", "INFO", "INFO"]
+    assert all("would CROSS" in msg for _, msg in _guard_records(caplog)), (
+        "the refusal text itself is untouched — only the level moves")
+    assert client._sdk.orders.calls == [], "still nothing placed, three times over"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_after_refusals_pages_the_CLEAR_once_with_the_count(caplog):
+    """The other half of the state change: when a (slug, side) passes the guard after refusing,
+    the operator gets ONE line saying the episode ended and how big it was — issue only, no
+    rationale, fingerprinted by slug+side. A second pass pages nothing (state was popped).
+
+    ⛔ MUTANT: never clear (drop the `_guard_cleared` call, or make it a no-op) — RED here."""
+    caplog.set_level("INFO")
+    client = _gtc_client_2s(best_bid="0.7000", best_ask="0.7300")
+    for _ in range(3):
+        assert await client.place_limit_gtc("slug-x", 0.7750, 5, "[t]") is None
+    caplog.clear()
+
+    assert await client.place_limit_gtc("slug-x", 0.7000, 5, "[t]") is not None
+    cleared = [(lvl, msg) for lvl, msg in _guard_records(caplog) if "cleared" in msg]
+    assert len(cleared) == 1 and cleared[0][0] == "WARNING"
+    assert "cross guard cleared slug-x bid: refused 3 placements over" in cleared[0][1], (
+        "the fingerprint is slug + BOOK SIDE, never the intent token")
+    assert "[guard rest_fresh" in cleared[0][1]
+
+    caplog.clear()
+    assert await client.place_limit_gtc("slug-x", 0.7000, 5, "[t]") is not None
+    assert _guard_records(caplog) == [], "a quiet guard pages nothing at all"
+
+
+@pytest.mark.asyncio
+async def test_the_alert_state_is_PER_SIDE_and_never_moves_the_refusal_itself(caplog):
+    """The sell side keeps its own key, so a refusing bid does not mute the first ask refusal —
+    and the return value stays None on every refusal regardless of level.
+
+    ⛔ THE KEY IS THE BOOK SIDE, NOT THE INTENT TOKEN. One ask is spelled `sell` or `sell_long`
+    depending on inventory, so keying on `side` verbatim made a mid-episode dust close read as a
+    first refusal — a page.
+    ⛔ MUTANT: key on `side` — the third call pages a second WARNING and this goes RED."""
+    caplog.set_level("INFO")
+    client = _gtc_client_2s(best_bid="0.7000", best_ask="0.7300")
+    assert await client.place_limit_gtc("slug-x", 0.7750, 5, "[t]") is None      # buy crosses
+    assert await client.place_limit_gtc("slug-x", 0.6500, 5, "[t]", side="sell") is None
+    assert await client.place_limit_gtc("slug-x", 0.6500, 5, "[t]", side="sell_long") is None
+    assert [lvl for lvl, _ in _guard_records(caplog)] == ["WARNING", "WARNING", "INFO"]
+    assert client.last_guard_book["slug-x"]["refused"] is True
+    assert client._sdk.orders.calls == []
+
+
+# ── the NEWER-WITNESS rule: a stale REST touch yields to the caller's WS book [2026-09-03] ─────
+
+def _stamped_gtc_client(best_bid: str, best_ask: str, rest_age_s: float,
+                        monkeypatch) -> PolyUSClient:
+    """A guard whose REST book carries a REAL transactTime, `rest_age_s` seconds old at a frozen
+    `time.time()` of 1_800_000_000 + rest_age_s. The frozen clock is what lets a test state the
+    witness's own epoch exactly."""
+    client = _gtc_client(best_ask=best_ask, best_bid=best_bid)
+    md = client._sdk.book_payload()
+    md["marketData"]["transactTime"] = "2027-01-15T08:00:00.000000000Z"   # 1_800_000_000 epoch
+    client._sdk.book_payload = lambda: md
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_000.0 + rest_age_s)
+    return client
+
+
+def test_the_newer_witness_rule_clears_only_a_provably_stale_non_crossing_REST_book():
+    """`_newer_witness_clears` at the TEARDOWN FLATTEN's call site (`PolyMaker._teardown_flatten`
+    calls this static method directly to decide which of the two books prices the close). Since
+    `place_limit_gtc` no longer reaches this rule with a witness —
+    a witness plus `post_only` skips the REST read entirely — so the rule is pinned where its
+    remaining caller uses it. Every arm below is the frozen-origin defect: origin froze for 305 s
+    on `<slug>` while our WS book had the touch near 0.31.
+
+    ⛔ MUTANT: drop the margin compare (`newer_by < GUARD_WITNESS_MARGIN_S`), drop the
+    WS-non-cross check, or drop `post_only` — each goes RED on one arm here."""
+    rest_ts = 1_800_000_000.0
+    newer = (Decimal("0.3100"), Decimal("0.9000"),
+             rest_ts + client_mod.GUARD_WITNESS_MARGIN_S + 1.0)
+    # A witness past the margin whose own touch does NOT cross clears, and says by how much.
+    assert PolyUSClient._newer_witness_clears(
+        "sell", Decimal("0.3200"), rest_ts, newer, True) == pytest.approx(
+            client_mod.GUARD_WITNESS_MARGIN_S + 1.0)
+    # Under the margin the two books disagree about the MARKET, not about time.
+    inside = (newer[0], newer[1], rest_ts + client_mod.GUARD_WITNESS_MARGIN_S - 1.0)
+    assert PolyUSClient._newer_witness_clears(
+        "sell", Decimal("0.3200"), rest_ts, inside, True) is None
+    # The witness ALSO crosses — both books agree the price takes, so there is nothing to resolve.
+    crosses = (Decimal("0.3300"), newer[1], newer[2])
+    assert PolyUSClient._newer_witness_clears(
+        "sell", Decimal("0.3200"), rest_ts, crosses, True) is None
+    # No `post_only`, no override: that caller has no venue-side backstop.
+    assert PolyUSClient._newer_witness_clears(
+        "sell", Decimal("0.3200"), rest_ts, newer, False) is None
+    # An unstamped REST body cannot be SHOWN to be older than anything.
+    assert PolyUSClient._newer_witness_clears(
+        "sell", Decimal("0.3200"), None, newer, True) is None
+
+
+@pytest.mark.asyncio
+async def test_a_witness_plus_post_only_guards_on_the_WS_touch_and_reads_NO_origin_book(monkeypatch):
+    """⛔ THE ORIGIN READ IS THE OUTAGE. One cache-busted book read
+    per placement reaches ORIGIN. Run <run-id> (21:39–22:04Z) saw ~40
+    origin reads per cycle, four holds (30/480/960/1920 s), and during holds every placement
+    refused `fresh book read FAILED` (6,300+). This observation establishes no limiter threshold.
+    With a witness that passed
+    the maker's freshness rails AND `post_only`, the guard compares the WS touch and makes NO
+    request: here the REST bid 0.3450 would cross 0.32 and is never even read.
+
+    ⛔ MUTANT: keep the `_fetch_book` call on the witness arm → RED on `reads`."""
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_300.0)
+    client = _gtc_client(best_bid="0.3450", best_ask="0.9000")
+    out = await client.place_limit_gtc(
+        "slug-x", 0.3200, 5, "[t]", post_only=True, side="sell",
+        ws_touch=(Decimal("0.3100"), Decimal("0.9000"), 1_800_000_290.0))
+    assert out is not None, "0.32 rests on the live 0.3100 bid"
+    assert client._sdk.reads == [], "no origin book read at all on the witness arm"
+    assert client._sdk.orders.calls[0]["participateDontInitiate"] is True
+    seen = client.last_guard_book["slug-x"]
+    assert (seen["src"], seen["refused"]) == ("ws_fresh", False)
+    assert (seen["bid"], seen["ask"]) == (Decimal("0.3100"), Decimal("0.9000")), (
+        "the touch it really compared — the witness, not a REST body")
+    assert seen["age_s"] == pytest.approx(10.0, abs=0.001), (
+        "the witness's OWN transactTime age, the column that says whether it was worth believing")
+
+
+@pytest.mark.asyncio
+async def test_a_witness_that_CROSSES_refuses_without_reading_the_origin_book(monkeypatch):
+    """The arm that keeps the witness from being a bypass: the WS touch says the price takes, so
+    the placement refuses exactly as a REST cross would — and still spends no request. The REST
+    book here would have CLEARED it (bid 0.3000), which is the whole point: the witness is the
+    guard now, not a second opinion.
+
+    ⛔ MUTANT: flip the clears compare (`yes_px > ws_bid` → `<`) → RED (this places)."""
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_300.0)
+    client = _gtc_client(best_bid="0.3000", best_ask="0.9000")
+    out = await client.place_limit_gtc(
+        "slug-x", 0.3200, 5, "[t]", post_only=True, side="sell",
+        ws_touch=(Decimal("0.3300"), Decimal("0.9000"), 1_800_000_290.0))
+    assert out is None and client._sdk.orders.calls == []
+    assert client._sdk.reads == []
+    seen = client.last_guard_book["slug-x"]
+    assert (seen["src"], seen["refused"]) == ("ws_fresh", True)
+
+
+@pytest.mark.asyncio
+async def test_a_witness_with_an_UNREADABLE_side_falls_back_to_the_origin_read(monkeypatch):
+    """⛔ FAIL DIRECTION. A half-read witness is doubt, and doubt takes the REST arm — never a
+    placement without a guard. Here the witness has no bid, the origin read happens, and the REST
+    bid 0.3450 refuses 0.32 as it always did."""
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_300.0)
+    client = _gtc_client(best_bid="0.3450", best_ask="0.9000")
+    out = await client.place_limit_gtc(
+        "slug-x", 0.3200, 5, "[t]", post_only=True, side="sell",
+        ws_touch=(None, Decimal("0.9000"), 1_800_000_290.0))   # type: ignore[arg-type]
+    assert out is None and client._sdk.orders.calls == []
+    assert len(client._sdk.reads) == 1, "the origin read still runs when the witness is doubtful"
+    assert client.last_guard_book["slug-x"]["src"] == "rest_fresh"
+
+
+@pytest.mark.asyncio
+async def test_an_UNREAD_rest_book_refuses_when_there_is_NO_ws_witness(monkeypatch):
+    """⛔ AN UNREADABLE BOOK IS NOT A CLEARED ONE. Without a witness the guard must read, and both
+    fail-closed branches (the touch is absent, or the fetch raised) refuse with nothing placed."""
+    monkeypatch.setattr(client_mod.time, "time", lambda: 1_800_000_300.0)
+    client = _gtc_client(best_ask="0.9000")      # bids absent → the sell touch is UNREADABLE
+
+    async def _boom(path, query=None):
+        raise RuntimeError("venue 502")
+
+    assert await client.place_limit_gtc("slug-x", 0.3200, 5, "[t]", post_only=True,
+                                        side="sell") is None, "unreadable bid refuses"
+    client._sdk.get = _boom
+    assert await client.place_limit_gtc("slug-x", 0.3200, 5, "[t]", post_only=True,
+                                        side="sell") is None, "unread book refuses"
+    assert client.last_guard_book["slug-x"]["src"] == "unread"
+    assert client._sdk.orders.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_post_only_FALSE_caller_never_gets_the_override(monkeypatch):
+    """⛔ THE OVERRIDE IS ONLY SAFE BEHIND `participateDontInitiate`. Placing through a touch we
+    are choosing not to believe widens the read-vs-place race, and post_only is what closes it
+    atomically at the venue (PROVEN 2026-07-19, n=1 per arm). Without the flag the guard is the
+    caller's only protection, so the same witness that clears a post_only order refuses here.
+
+    ⛔ MUTANT: drop `post_only` from `_newer_witness_clears` — RED."""
+    client = _stamped_gtc_client(best_bid="0.3450", best_ask="0.9000", rest_age_s=300.0,
+                                 monkeypatch=monkeypatch)
+    out = await client.place_limit_gtc(
+        "slug-x", 0.3200, 5, "[t]", side="sell",
+        ws_touch=(Decimal("0.3100"), Decimal("0.9000"), 1_800_000_290.0))
+    assert out is None and client._sdk.orders.calls == []
+
+
+def test_the_SDK_websocket_REFUSES_a_bound_source_address(monkeypatch):
+    """⛔ Half-binding is worse than not binding: the SDK WebSocket path opens its own socket with
+    no local-address argument, so with `POLY_SOURCE_IP` set it would leave from the PRIMARY IP
+    while the operator believed this unit was off it (the private design notes § Second IP for collectors)."""
+    from bot.core import config as _config
+    from bot.poly_us.feed import PolyUSOrderBookCache
+
+    monkeypatch.setattr(_config, "POLY_SOURCE_IP", "203.0.113.9", raising=False)
+    monkeypatch.setattr(_config, "POLY_US_FEED_SOURCE", "sdk", raising=False)
+    with pytest.raises(ValueError, match="cannot bind a source address"):
+        PolyUSOrderBookCache(object())
+
+    monkeypatch.setattr(_config, "POLY_US_FEED_SOURCE", "raw", raising=False)
+    feed = PolyUSOrderBookCache(object())
+    assert feed._source_ip == "203.0.113.9"
+
+
+# ── the maker key's PUBLIC reads go out on the COLLECTOR key ─────
+
+@pytest.mark.asyncio
+async def test_the_crossing_guards_book_read_goes_out_on_the_public_reader():
+    """Public GETs use the unauthenticated gateway and the collector source route. The guard's
+    cache-busted `/book` read must use the reader's SDK, while the private POST stays on the maker
+    client, which is the only client that may place an order."""
+    client = _gtc_client(best_ask="0.60")
+    reader = _gtc_client(best_ask="0.60")
+    client.public_reader = reader
+    out = await client.place_limit_gtc("slug-x", 0.50, 1, "[t]")
+    assert out is not None                                  # the guard cleared on the reader's book
+    assert len(reader._sdk.reads) == 1                       # the fresh /book read: reader's key
+    assert reader._sdk.reads[0][0] == "/v1/markets/slug-x/book"
+    assert client._sdk.reads == [] and client._sdk.cached_reads == []   # nothing on the maker key
+    # …and the PRIVATE call never moves: only the maker key is authorized to place.
+    assert len(client._sdk.orders.calls) == 1
+    assert reader._sdk.orders.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_reader_refusal_refuses_the_placement_and_never_re_reads_on_the_maker_key():
+    """⛔ NO FALLBACK. If the reader's bucket is held (`VenueBanned`), retrying the same read on
+    the maker key would spend exactly the request this split exists to keep off that key — and
+    a guard that cannot run refuses, as it already does for any failed read."""
+    from bot.core.venue_budget import VenueBanned
+
+    client = _gtc_client(best_ask="0.60")
+    reader = _gtc_client(best_ask="0.60")
+
+    async def _banned(path, query=None):
+        raise VenueBanned(0.0, "rate-limited")
+
+    reader._sdk.get = _banned
+    client.public_reader = reader
+    assert await client.place_limit_gtc("slug-x", 0.50, 1, "[t]") is None
+    assert client._sdk.reads == [] and client._sdk.cached_reads == []
+    assert client._sdk.orders.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_reader_is_task_local_and_keeps_private_orders_on_maker_key(monkeypatch):
+    import asyncio
+    import bot.poly_us.client as poly_client
+
+    client = _gtc_client(best_ask="0.60")
+    ordinary = _gtc_client(best_ask="0.60")
+    recovery = _gtc_client(best_ask="0.60")
+    client.public_reader = ordinary
+    closed = []
+
+    async def close_recovery():
+        closed.append(True)
+
+    metadata_reads = []
+
+    async def recovery_meta(slug):
+        metadata_reads.append(slug)
+        return {"market": {"status": "MARKET_STATUS_OPEN",
+                           "orderPriceMinTickSize": "0.01", "minimumTradeQty": "0.01"}}
+
+    async def ordinary_meta(slug):
+        pytest.fail(f"recovery metadata leaked to ordinary reader: {slug}")
+
+    recovery._sdk.markets.retrieve_by_slug = recovery_meta
+    ordinary._sdk.markets.retrieve_by_slug = ordinary_meta
+    recovery.close = close_recovery
+    monkeypatch.setattr(poly_client, "collector_reader",
+                        lambda **kw: recovery if kw == {"allow_during_ban": True} else None)
+    go = asyncio.Event()
+
+    async def background_read():
+        await go.wait()
+        await client._fetch_book("background", fresh=True)
+
+    background = asyncio.create_task(background_read())
+    async with client.recovery_public_reads():
+        assert await client.get_market_status("slug-x") == "MARKET_STATUS_OPEN"
+        assert await client.get_market_meta("slug-x") == (Decimal("0.01"), Decimal("0.01"))
+        assert await client.place_limit_gtc("slug-x", 0.50, 1, "[t]") is not None
+        go.set()
+        await background
+        await asyncio.create_task(client._fetch_book("child", fresh=True))
+    await client._fetch_book("ordinary", fresh=True)
+
+    assert [path for path, _ in recovery._sdk.reads] == ["/v1/markets/slug-x/book"]
+    assert [path for path, _ in ordinary._sdk.reads] == [
+        "/v1/markets/background/book", "/v1/markets/child/book",
+        "/v1/markets/ordinary/book"]
+    assert client._sdk.reads == []
+    assert len(client._sdk.orders.calls) == 1
+    assert recovery._sdk.orders.calls == []
+    assert metadata_reads == ["slug-x", "slug-x"]
+    assert closed == [True]
+
+
+def test_collector_reader_is_None_with_no_env_and_no_file(monkeypatch, tmp_path):
+    """No collector credentials = exactly today's single-key behaviour, never a guess."""
+    import bot.poly_us.client as poly_client
+
+    for name in ("PMB_COLLECTOR_KEY_ID", "PMB_COLLECTOR_SECRET_KEY", "PMB_COLLECTOR_SOURCE_IP"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PMB_COLLECTOR_ENV_FILE", str(tmp_path / "absent.env"))
+    assert poly_client.collector_reader() is None
+
+
+def test_collector_reader_builds_the_reader_from_the_env_FILE_on_the_collector_class(
+        monkeypatch, tmp_path):
+    """The fallback route the box actually uses: the collector unit's own `.env.collectors`, whose
+    variable names are the SAME as the maker's (different values). ⛔ `PRIO_OPERATOR`, never
+    `PRIO_MAKER`: this client draws on the COLLECTOR bucket, where the maker class is not its to
+    take. Asserts on the constructed kwargs — never on a printed credential."""
+    import bot.poly_us.client as poly_client
+    from bot.core import venue_budget
+
+    for name in ("PMB_COLLECTOR_KEY_ID", "PMB_COLLECTOR_SECRET_KEY", "PMB_COLLECTOR_SOURCE_IP"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env.collectors"
+    env.write_text("# collectors\nexport POLYMARKET_US_KEY_ID=collector-key\n"
+                   "POLYMARKET_US_SECRET_KEY='collector-secret'\n"
+                   "POLY_SOURCE_IP=203.0.113.45\n"
+                   "POLY_UNRELATED=x\n", encoding="utf-8")
+    monkeypatch.setenv("PMB_COLLECTOR_ENV_FILE", str(env))
+    built: list[dict] = []
+    monkeypatch.setattr(poly_client, "PolyUSClient",
+                        lambda **kw: built.append(kw) or "reader-client")
+    assert poly_client.collector_reader() == "reader-client"
+    assert built == [{"prio": venue_budget.PRIO_OPERATOR, "source_ip": "203.0.113.45",
+                      "api_key_id": "collector-key", "api_secret_key": "collector-secret",
+                      "allow_during_ban": False}]
+    assert built[0]["prio"] != venue_budget.PRIO_MAKER
+
+    built.clear()
+    assert poly_client.collector_reader(allow_during_ban=True) == "reader-client"
+    assert built == [{"prio": venue_budget.PRIO_OPERATOR, "source_ip": "203.0.113.45",
+                      "api_key_id": "collector-key", "api_secret_key": "collector-secret",
+                      "allow_during_ban": True}]
+
+
+def test_collector_reader_refuses_a_MALFORMED_env_line_instead_of_half_a_credential(
+        monkeypatch, tmp_path, caplog):
+    """`EnvironmentFile=` does not strip an inline `#`, and a value with inner whitespace has no
+    unambiguous end. Authenticating on half a key would meet the maker's read path as a 401, not as
+    a book. Refuse, and name the LINE NUMBER only — never the value or a fragment of it."""
+    import bot.poly_us.client as poly_client
+
+    for name in ("PMB_COLLECTOR_KEY_ID", "PMB_COLLECTOR_SECRET_KEY", "PMB_COLLECTOR_SOURCE_IP"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env.collectors"
+    env.write_text("POLYMARKET_US_KEY_ID=collector-key\n"
+                   "POLYMARKET_US_SECRET_KEY=sec ret   # the collector's\n"
+                   "POLY_SOURCE_IP=203.0.113.45\n", encoding="utf-8")
+    monkeypatch.setenv("PMB_COLLECTOR_ENV_FILE", str(env))
+    monkeypatch.setattr(poly_client, "PolyUSClient",
+                        lambda **kw: pytest.fail("built a reader on a malformed file"))
+    with caplog.at_level("WARNING"):
+        assert poly_client.collector_reader() is None
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("line 2" in m for m in msgs), msgs
+    assert not any("sec" in m or "ret" in m for m in msgs), "a credential fragment was logged"

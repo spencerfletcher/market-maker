@@ -28,7 +28,9 @@ Read it with `python -m scripts.opswatch`, or just `cat logs/alert_health.json`.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +40,17 @@ from bot.core import durable
 log = logging.getLogger(__name__)
 
 DEFAULT_PATH = durable.repo_path("logs", "alert_health.json")
+
+# Append-only record of FAILED sends, one JSON line each. Separate from the summary ledger above
+# because the summary is fixed-size on purpose (it can never grow), and the thing missing at the
+# 2026-09-15 19:56Z halt was the per-failure detail: every send returned HTTP 400 and the response
+# BODY — the only place Discord says which field it rejected — was never captured.
+FAILURES_NAME = "alert_failures.jsonl"
+
+# Enough of the body to carry Discord's error JSON (it names the offending field and index) without
+# turning the failure log into the payload log.
+FAILURE_BODY_CHARS = 1_000
+FAILURE_MESSAGE_CHARS = 2_000
 
 # Consecutive failures before a channel is called DEAD rather than flaky. One 500 or one dropped
 # connection is noise; a streak means every alert since the streak began was lost — including,
@@ -138,6 +151,44 @@ def record_delivery(
             f"({detail}). Every alert since the streak began was LOST, including any strand or "
             f"reconcile alert. Check the webhook/token; see {target}."
         )
+
+
+def record_failure(
+    channel: str,
+    status: int | None,
+    body: str,
+    message: str,
+    caller: str = "unknown",
+    *,
+    path: str | None = None,
+    now: float | None = None,
+) -> None:
+    """Append ONE JSON line describing a failed send. Never raises (same contract as
+    `record_delivery`: this runs on the alert path, inside the fire window).
+
+    Append, not read-modify-write: these are the forensic rows, and the failure that matters is
+    usually a burst — a summary would overwrite the first 400 with the 400th.
+    """
+    if now is None:
+        now = time.time()
+    # Resolved at CALL time, and as a SIBLING of the summary ledger: one redirect (the test
+    # sandbox's, or an operator's) moves both, and neither can be pinned to a stale directory by a
+    # bound default argument.
+    target = path or os.path.join(os.path.dirname(DEFAULT_PATH), FAILURES_NAME)
+    row = {
+        "ts": now,
+        "channel": channel,
+        "status": status,
+        "body": (body or "")[:FAILURE_BODY_CHARS],
+        "message_len": len(message or ""),
+        "message": (message or "")[:FAILURE_MESSAGE_CHARS],
+        "caller": caller,
+    }
+    try:
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception as exc:                   # never raise into an alert caller
+        log.error(f"alert_health: could not append {channel} failure to {target} ({exc!r})")
 
 
 def load_health(path: str | None = None) -> dict[str, ChannelHealth]:
